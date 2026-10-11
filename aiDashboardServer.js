@@ -12,6 +12,65 @@ const AUTO_EMAIL_TEMPLATE_VARIABLES = new Set(['USER_NAME', 'USER_EMAIL', 'APP_N
 const requestWindows = new Map();
 const sessionWindows = new Map();
 
+const getSocialTokenEncryptionKey = () => {
+    const configured = String(process.env.SOCIAL_TOKEN_ENCRYPTION_KEY || '');
+    if (/^[\da-f]{64}$/i.test(configured)) return Buffer.from(configured, 'hex');
+    const decoded = Buffer.from(configured, 'base64');
+    return decoded.length === 32 ? decoded : null;
+};
+
+const encryptSocialToken = (value, key) => {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+    return `v1.${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${ciphertext.toString('base64url')}`;
+};
+
+const decryptSocialToken = (value, key) => {
+    const [version, encodedIv, encodedTag, encodedCiphertext] = String(value || '').split('.');
+    if (version !== 'v1' || !encodedIv || !encodedTag || !encodedCiphertext) {
+        throw new Error('Stored social account credentials have an unsupported format.');
+    }
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(encodedIv, 'base64url'));
+    decipher.setAuthTag(Buffer.from(encodedTag, 'base64url'));
+    return Buffer.concat([
+        decipher.update(Buffer.from(encodedCiphertext, 'base64url')),
+        decipher.final(),
+    ]).toString('utf8');
+};
+
+const parseSocialResponse = async (response, provider) => {
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(`${provider} returned HTTP ${response.status}.`);
+    const providerError = data.error && typeof data.error === 'object' && data.error.code === 'ok'
+        ? null
+        : data.error;
+    if (providerError || data.error_code) {
+        const detail = typeof providerError === 'string' ? providerError : providerError?.message;
+        throw new Error(detail || data.message || `${provider} rejected the request.`);
+    }
+    return data;
+};
+
+const validatePublicMediaUrl = (value) => {
+    if (typeof value !== 'string' || value.length > 2048) return false;
+    try {
+        const parsed = new URL(value);
+        const host = parsed.hostname.toLowerCase();
+        return parsed.protocol === 'https:' &&
+            !parsed.username &&
+            !parsed.password &&
+            !['localhost', '127.0.0.1', '::1'].includes(host) &&
+            !host.endsWith('.localhost') &&
+            !host.endsWith('.local') &&
+            !/^10\./.test(host) &&
+            !/^192\.168\./.test(host) &&
+            !/^172\.(1[6-9]|2\d|3[01])\./.test(host);
+    } catch {
+        return false;
+    }
+};
+
 const escapeHtml = (value = '') => String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -248,6 +307,110 @@ const getEmailAdmin = async (req, supabase, verifyAdminToken) => {
         return { error: 'Only active administrators can use manual email tools.', status: 403 };
     }
     return authorization;
+};
+
+const getAutomationAdmin = async (req, supabase, verifyAdminToken) => {
+    const authorization = await getAdmin(req, supabase, verifyAdminToken);
+    if (authorization.error) return authorization;
+    if (authorization.admin.role !== 'admin') {
+        return { error: 'Only active store administrators can manage automations.', status: 403 };
+    }
+    return authorization;
+};
+
+const marketingCampaignChannels = new Set(['instagram', 'facebook', 'email', 'search', 'content', 'other']);
+const marketingCampaignGoals = new Set(['awareness', 'traffic', 'engagement', 'sales', 'retention']);
+const marketingCampaignStatuses = new Set(['draft', 'scheduled', 'active', 'completed']);
+const marketingCampaignFields = new Set(['name', 'channel', 'goal', 'status', 'audience', 'budget', 'startsOn', 'endsOn', 'notes']);
+const automationStatuses = new Set(['draft', 'active', 'paused']);
+const automationFields = new Set(['name', 'threshold', 'recipientEmail', 'status']);
+
+const validateAutomationRule = (input) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input) ||
+        Object.keys(input).some((field) => !automationFields.has(field))) {
+        return { error: 'Invalid automation details.' };
+    }
+    const name = typeof input.name === 'string' ? input.name.trim() : '';
+    if (name.length < 2 || name.length > 100) return { error: 'Automation name must be between 2 and 100 characters.' };
+
+    if ((typeof input.threshold !== 'number' && typeof input.threshold !== 'string') || String(input.threshold).trim() === '') {
+        return { error: 'Stock threshold must be a whole number between 0 and 100,000.' };
+    }
+    const threshold = Number(input.threshold);
+    if (!Number.isInteger(threshold) || threshold < 0 || threshold > 100000) {
+        return { error: 'Stock threshold must be a whole number between 0 and 100,000.' };
+    }
+    const recipientEmail = typeof input.recipientEmail === 'string' ? input.recipientEmail.trim().toLowerCase() : '';
+    if (recipientEmail.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
+        return { error: 'Enter a valid notification email address.' };
+    }
+    const status = input.status ?? 'draft';
+    if (!automationStatuses.has(status)) return { error: 'Choose draft, active, or paused status.' };
+    return { values: { name, threshold, recipientEmail, status } };
+};
+
+const validateMarketingCampaign = (input) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input) ||
+        Object.keys(input).some((field) => !marketingCampaignFields.has(field))) {
+        return { error: 'Invalid marketing campaign details.' };
+    }
+    const name = typeof input.name === 'string' ? input.name.trim() : '';
+    if (name.length < 2 || name.length > 120) return { error: 'Campaign name must be between 2 and 120 characters.' };
+    if (!marketingCampaignChannels.has(input.channel)) return { error: 'Choose a supported campaign channel.' };
+    if (!marketingCampaignGoals.has(input.goal)) return { error: 'Choose a supported campaign goal.' };
+
+    const status = input.status ?? 'draft';
+    if (!marketingCampaignStatuses.has(status)) return { error: 'Choose a supported campaign status.' };
+    const audience = input.audience ?? '';
+    const notes = input.notes ?? '';
+    if (typeof audience !== 'string' || audience.length > 500) return { error: 'Audience details must be 500 characters or fewer.' };
+    if (typeof notes !== 'string' || notes.length > 4000) return { error: 'Campaign notes must be 4,000 characters or fewer.' };
+
+    let budget = null;
+    if (input.budget !== undefined && input.budget !== null && input.budget !== '') {
+        budget = Number(input.budget);
+        if (!Number.isFinite(budget) || budget < 0 || budget > 9_999_999_999.99 ||
+            Math.abs((budget * 100) - Math.round(budget * 100)) > 1e-7) {
+            return { error: 'Campaign budget must be a non-negative amount with at most two decimal places.' };
+        }
+    }
+
+    const parseDate = (value) => {
+        if (value === undefined || value === null || value === '') return null;
+        if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+        const parsed = new Date(`${value}T00:00:00.000Z`);
+        return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value ? undefined : value;
+    };
+    const startsOn = parseDate(input.startsOn);
+    const endsOn = parseDate(input.endsOn);
+    if (startsOn === undefined || endsOn === undefined) return { error: 'Campaign dates must be valid calendar dates.' };
+    if (startsOn && endsOn && endsOn < startsOn) return { error: 'Campaign end date cannot be before its start date.' };
+
+    return {
+        values: {
+            name,
+            channel: input.channel,
+            goal: input.goal,
+            status,
+            audience: audience.trim(),
+            budget,
+            starts_on: startsOn,
+            ends_on: endsOn,
+            notes: notes.trim(),
+        },
+    };
+};
+
+const getSupportTicket = async (supabase, admin, ticketId) => {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ticketId)) {
+        return { error: 'Support ticket not found.', status: 404 };
+    }
+    let query = supabase.from('support_tickets').select('*').eq('id', ticketId);
+    if (admin.role !== 'admin') query = query.eq('assigned_to', admin.id);
+    const { data: ticket, error } = await query.maybeSingle();
+    if (error) throw new Error(`Unable to load support ticket: ${error.message}`);
+    if (!ticket) return { error: 'Support ticket not found or not assigned to your account.', status: 404 };
+    return { ticket };
 };
 
 const getAdminById = async (supabase, adminId) => {
@@ -690,6 +853,7 @@ export const registerAIDashboardRoutes = ({
     genAI,
     model,
     verifyAdminToken,
+    tokenSecret,
     hashPassword,
     createAdminToken,
     createGoogleLinkGrant,
@@ -707,6 +871,784 @@ export const registerAIDashboardRoutes = ({
     app.use('/api/admin/ai', (req, res, next) => {
         res.set('Cache-Control', 'no-store');
         next();
+    });
+
+    const socialApiOrigin = String(process.env.AI_DASHBOARD_API_PUBLIC_URL || process.env.AI_DASHBOARD_PUBLIC_URL || '').replace(/\/+$/, '');
+    const socialFrontendOrigin = String(process.env.AI_DASHBOARD_PUBLIC_URL || '').replace(/\/+$/, '');
+    const metaGraphVersion = process.env.META_GRAPH_API_VERSION || 'v25.0';
+    const getSocialCallbackUrl = (provider) => {
+        if (!socialApiOrigin) throw new Error('Set AI_DASHBOARD_API_PUBLIC_URL before connecting social accounts.');
+        const base = new URL(socialApiOrigin);
+        if (base.protocol !== 'https:' && !(process.env.NODE_ENV !== 'production' && base.hostname === 'localhost')) {
+            throw new Error('The social API public URL must use HTTPS.');
+        }
+        return new URL(`/api/admin/ai/marketing/social/callback/${provider}`, base).toString();
+    };
+    const createSocialOAuthState = (adminId, provider) => {
+        const payload = Buffer.from(JSON.stringify({
+            sub: String(adminId),
+            provider,
+            purpose: 'marketing-social-oauth',
+            nonce: crypto.randomBytes(18).toString('base64url'),
+            exp: Date.now() + 10 * 60_000,
+        })).toString('base64url');
+        const signature = crypto.createHmac('sha256', tokenSecret).update(payload).digest('base64url');
+        return `${payload}.${signature}`;
+    };
+    const verifySocialOAuthState = (state, provider) => {
+        const [payload, signature] = String(state || '').split('.');
+        if (!payload || !signature) return null;
+        const expected = crypto.createHmac('sha256', tokenSecret).update(payload).digest();
+        const provided = Buffer.from(signature, 'base64url');
+        if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) return null;
+        try {
+            const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+            if (decoded.purpose !== 'marketing-social-oauth' || decoded.provider !== provider ||
+                !decoded.sub || !decoded.nonce || !Number.isFinite(decoded.exp) || decoded.exp <= Date.now()) return null;
+            return String(decoded.sub);
+        } catch {
+            return null;
+        }
+    };
+    const getConnectedSocialAccount = async (accountId) => {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(accountId || ''))) {
+            return { error: 'Social account not found.', status: 404 };
+        }
+        const { data, error } = await supabase
+            .from('marketing_social_accounts')
+            .select('*')
+            .eq('id', accountId)
+            .eq('connected', true)
+            .maybeSingle();
+        if (error) throw new Error(`Unable to load connected social account: ${error.message}`);
+        if (!data) return { error: 'Social account not found or disconnected.', status: 404 };
+        return { account: data };
+    };
+    const saveSocialAccount = async ({ platform, externalAccountId, accountName, accessToken, refreshToken, expiresIn, scopes, metadata, adminId }) => {
+        const encryptionKey = getSocialTokenEncryptionKey();
+        if (!encryptionKey) throw new Error('Configure SOCIAL_TOKEN_ENCRYPTION_KEY with a 32-byte base64 or 64-character hex key before connecting social accounts.');
+        const expiresAt = Number.isFinite(Number(expiresIn)) && Number(expiresIn) > 0
+            ? new Date(Date.now() + Number(expiresIn) * 1000).toISOString()
+            : null;
+        const { error } = await supabase.from('marketing_social_accounts').upsert({
+            platform,
+            external_account_id: String(externalAccountId),
+            account_name: String(accountName || externalAccountId).slice(0, 240),
+            access_token_ciphertext: encryptSocialToken(accessToken, encryptionKey),
+            refresh_token_ciphertext: refreshToken ? encryptSocialToken(refreshToken, encryptionKey) : null,
+            token_expires_at: expiresAt,
+            granted_scopes: Array.isArray(scopes) ? scopes : [],
+            metadata: metadata || {},
+            connected: true,
+            connected_by: adminId,
+            updated_at: new Date().toISOString(),
+        }, { onConflict: 'platform,external_account_id' });
+        if (error) throw new Error(`Unable to save connected social account: ${error.message}`);
+    };
+    const getSocialAccessToken = async (account) => {
+        const encryptionKey = getSocialTokenEncryptionKey();
+        if (!encryptionKey) throw new Error('Social account token encryption is not configured.');
+        let accessToken = decryptSocialToken(account.access_token_ciphertext, encryptionKey);
+        const expiresAt = account.token_expires_at ? new Date(account.token_expires_at).getTime() : 0;
+        if (account.platform !== 'tiktok' || !expiresAt || expiresAt > Date.now() + 5 * 60_000) return accessToken;
+        if (!account.refresh_token_ciphertext) throw new Error('TikTok access expired. Disconnect and reconnect the TikTok account.');
+        const refreshToken = decryptSocialToken(account.refresh_token_ciphertext, encryptionKey);
+        const refreshed = await parseSocialResponse(await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                client_key: process.env.TIKTOK_CLIENT_KEY || '',
+                client_secret: process.env.TIKTOK_CLIENT_SECRET || '',
+                grant_type: 'refresh_token',
+                refresh_token: refreshToken,
+            }),
+        }), 'TikTok token refresh');
+        const tokenData = refreshed.data || refreshed;
+        if (!tokenData.access_token) throw new Error('TikTok did not return a refreshed access token. Reconnect the account.');
+        const { error } = await supabase.from('marketing_social_accounts').update({
+            access_token_ciphertext: encryptSocialToken(tokenData.access_token, encryptionKey),
+            refresh_token_ciphertext: tokenData.refresh_token ? encryptSocialToken(tokenData.refresh_token, encryptionKey) : account.refresh_token_ciphertext,
+            token_expires_at: Number(tokenData.expires_in) > 0 ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString() : null,
+            updated_at: new Date().toISOString(),
+        }).eq('id', account.id);
+        if (error) throw new Error(`TikTok token refreshed but could not be saved: ${error.message}`);
+        accessToken = tokenData.access_token;
+        return accessToken;
+    };
+
+    app.get('/api/admin/ai/marketing/social', async (req, res) => {
+        try {
+            const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            const { data, error } = await supabase
+                .from('marketing_social_accounts')
+                .select('id, platform, external_account_id, account_name, token_expires_at, granted_scopes, metadata, connected, created_at')
+                .eq('connected', true)
+                .order('created_at', { ascending: false })
+                .limit(100);
+            if (error) throw new Error(`Unable to load connected social accounts: ${error.message}`);
+            return res.json({
+                accounts: data || [],
+                providers: {
+                    meta: Boolean(process.env.META_APP_ID && process.env.META_APP_SECRET),
+                    tiktok: Boolean(process.env.TIKTOK_CLIENT_KEY && process.env.TIKTOK_CLIENT_SECRET),
+                    encryption: Boolean(getSocialTokenEncryptionKey()),
+                },
+                publicUrlConfigured: Boolean(socialFrontendOrigin),
+            });
+        } catch (error) {
+            console.error('AI dashboard social account list failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to load connected social accounts.' });
+        }
+    });
+
+    app.post('/api/admin/ai/marketing/social/connect/:provider', async (req, res) => {
+        try {
+            const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            if (!checkRateLimit(authorization.admin.id)) return res.status(429).json({ error: 'Too many marketing requests. Wait a minute and try again.' });
+            const { provider } = req.params;
+            if (!['meta', 'tiktok'].includes(provider)) return res.status(400).json({ error: 'Choose Meta or TikTok to connect.' });
+            if (!getSocialTokenEncryptionKey()) {
+                return res.status(503).json({ error: 'Configure SOCIAL_TOKEN_ENCRYPTION_KEY on the dashboard server before connecting social accounts.' });
+            }
+            const callbackUrl = getSocialCallbackUrl(provider);
+            const state = createSocialOAuthState(authorization.admin.id, provider);
+            const authorizationUrl = provider === 'meta'
+                ? (() => {
+                    if (!process.env.META_APP_ID || !process.env.META_APP_SECRET) throw new Error('Configure META_APP_ID and META_APP_SECRET on the dashboard server.');
+                    const url = new URL(`https://www.facebook.com/${metaGraphVersion}/dialog/oauth`);
+                    url.searchParams.set('client_id', process.env.META_APP_ID);
+                    url.searchParams.set('redirect_uri', callbackUrl);
+                    url.searchParams.set('response_type', 'code');
+                    url.searchParams.set('state', state);
+                    url.searchParams.set('scope', [
+                        'pages_show_list', 'pages_read_engagement', 'pages_manage_posts',
+                        'instagram_basic', 'instagram_content_publish',
+                    ].join(','));
+                    return url.toString();
+                })()
+                : (() => {
+                    if (!process.env.TIKTOK_CLIENT_KEY || !process.env.TIKTOK_CLIENT_SECRET) throw new Error('Configure TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET on the dashboard server.');
+                    const url = new URL('https://www.tiktok.com/v2/auth/authorize/');
+                    url.searchParams.set('client_key', process.env.TIKTOK_CLIENT_KEY);
+                    url.searchParams.set('redirect_uri', callbackUrl);
+                    url.searchParams.set('response_type', 'code');
+                    url.searchParams.set('scope', 'user.info.basic,video.publish,photo.publish');
+                    url.searchParams.set('state', state);
+                    return url.toString();
+                })();
+            return res.json({ authorizationUrl });
+        } catch (error) {
+            return res.status(503).json({ error: error.message || 'Unable to start social account authorization.' });
+        }
+    });
+
+    app.get('/api/admin/ai/marketing/social/callback/:provider', async (req, res) => {
+        const { provider } = req.params;
+        const stateAdminId = verifySocialOAuthState(req.query.state, provider);
+        const redirectToDashboard = (result) => {
+            if (!socialFrontendOrigin) return res.status(500).send('Set AI_DASHBOARD_PUBLIC_URL on the dashboard server.');
+            const redirectUrl = new URL('/#/marketing-seo', `${socialFrontendOrigin}/`);
+            redirectUrl.hash = `/marketing-seo?social=${encodeURIComponent(result)}`;
+            return res.redirect(302, redirectUrl.toString());
+        };
+        if (!stateAdminId || !['meta', 'tiktok'].includes(provider)) return redirectToDashboard('invalid_state');
+        if (req.query.error || typeof req.query.code !== 'string' || req.query.code.length > 4096) {
+            return redirectToDashboard('authorization_cancelled');
+        }
+        try {
+            const { data: admin, error: adminError } = await supabase
+                .from('users')
+                .select('id, role, status')
+                .eq('id', stateAdminId)
+                .maybeSingle();
+            if (adminError) throw new Error(`Unable to verify connecting administrator: ${adminError.message}`);
+            if (!admin || admin.role !== 'admin' || admin.status !== 'active') return redirectToDashboard('account_not_authorized');
+            const callbackUrl = getSocialCallbackUrl(provider);
+
+            if (provider === 'meta') {
+                const credentials = new URLSearchParams({
+                    client_id: process.env.META_APP_ID || '',
+                    client_secret: process.env.META_APP_SECRET || '',
+                    redirect_uri: callbackUrl,
+                    code: req.query.code,
+                });
+                const shortToken = await parseSocialResponse(await fetch(`https://graph.facebook.com/${metaGraphVersion}/oauth/access_token?${credentials}`), 'Meta OAuth');
+                const longTokenQuery = new URLSearchParams({
+                    grant_type: 'fb_exchange_token',
+                    client_id: process.env.META_APP_ID || '',
+                    client_secret: process.env.META_APP_SECRET || '',
+                    fb_exchange_token: shortToken.access_token,
+                });
+                const longToken = await parseSocialResponse(await fetch(`https://graph.facebook.com/${metaGraphVersion}/oauth/access_token?${longTokenQuery}`), 'Meta token exchange');
+                const pageUrl = new URL(`https://graph.facebook.com/${metaGraphVersion}/me/accounts`);
+                pageUrl.searchParams.set('fields', 'id,name,access_token,instagram_business_account{id,username}');
+                pageUrl.searchParams.set('access_token', longToken.access_token);
+                const pages = await parseSocialResponse(await fetch(pageUrl), 'Meta Pages');
+                if (!Array.isArray(pages.data) || !pages.data.length) throw new Error('No Facebook Pages were granted to this Meta account.');
+                for (const page of pages.data) {
+                    if (!page.id || !page.access_token) continue;
+                    await saveSocialAccount({
+                        platform: 'facebook',
+                        externalAccountId: page.id,
+                        accountName: page.name || 'Facebook Page',
+                        accessToken: page.access_token,
+                        expiresIn: null,
+                        scopes: String(shortToken.granted_scopes || '').split(',').filter(Boolean),
+                        metadata: { pageId: page.id },
+                        adminId: stateAdminId,
+                    });
+                    if (page.instagram_business_account?.id) {
+                        await saveSocialAccount({
+                            platform: 'instagram',
+                            externalAccountId: page.instagram_business_account.id,
+                            accountName: page.instagram_business_account.username || page.name || 'Instagram account',
+                            accessToken: page.access_token,
+                            expiresIn: null,
+                            scopes: String(shortToken.granted_scopes || '').split(',').filter(Boolean),
+                            metadata: { pageId: page.id, pageName: page.name || '' },
+                            adminId: stateAdminId,
+                        });
+                    }
+                }
+            } else {
+                if (!process.env.TIKTOK_CLIENT_KEY || !process.env.TIKTOK_CLIENT_SECRET) throw new Error('TikTok OAuth is not configured.');
+                const tokenResponse = await parseSocialResponse(await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        client_key: process.env.TIKTOK_CLIENT_KEY,
+                        client_secret: process.env.TIKTOK_CLIENT_SECRET,
+                        code: req.query.code,
+                        grant_type: 'authorization_code',
+                        redirect_uri: callbackUrl,
+                    }),
+                }), 'TikTok OAuth');
+                const tokenData = tokenResponse.data || tokenResponse;
+                if (!tokenData.access_token || !tokenData.open_id) throw new Error('TikTok did not return an authorized creator account.');
+                const userInfoUrl = new URL('https://open.tiktokapis.com/v2/user/info/');
+                userInfoUrl.searchParams.set('fields', 'open_id,display_name');
+                const creatorInfo = await parseSocialResponse(await fetch(userInfoUrl, {
+                    headers: { Authorization: `Bearer ${tokenData.access_token}` },
+                }), 'TikTok creator info');
+                const creator = creatorInfo.data?.user || {};
+                const privacyResponse = await parseSocialResponse(await fetch('https://open.tiktokapis.com/v2/post/publish/creator_info/query/', {
+                    method: 'POST',
+                    headers: { Authorization: `Bearer ${tokenData.access_token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({}),
+                }), 'TikTok posting permissions');
+                await saveSocialAccount({
+                    platform: 'tiktok',
+                    externalAccountId: tokenData.open_id,
+                    accountName: creator.display_name || 'TikTok account',
+                    accessToken: tokenData.access_token,
+                    refreshToken: tokenData.refresh_token || '',
+                    expiresIn: tokenData.expires_in,
+                    scopes: String(tokenData.scope || '').split(',').filter(Boolean),
+                    metadata: {
+                        privacyOptions: privacyResponse.data?.privacy_level_options || [],
+                    },
+                    adminId: stateAdminId,
+                });
+            }
+            return redirectToDashboard('connected');
+        } catch (error) {
+            console.error(`AI dashboard ${provider} OAuth callback failed:`, error.message);
+            return redirectToDashboard('connection_failed');
+        }
+    });
+
+    app.post('/api/admin/ai/marketing/social/accounts/:accountId/disconnect', async (req, res) => {
+        try {
+            const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            const account = await getConnectedSocialAccount(req.params.accountId);
+            if (account.error) return res.status(account.status).json({ error: account.error });
+            const { error } = await supabase.from('marketing_social_accounts')
+                .update({
+                    connected: false,
+                    access_token_ciphertext: '',
+                    refresh_token_ciphertext: null,
+                    token_expires_at: null,
+                    updated_at: new Date().toISOString(),
+                })
+                .eq('id', req.params.accountId);
+            if (error) throw new Error(`Unable to disconnect social account: ${error.message}`);
+            return res.json({ disconnected: true });
+        } catch (error) {
+            console.error('AI dashboard social account disconnect failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to disconnect social account.' });
+        }
+    });
+
+    app.get('/api/admin/ai/marketing/social/posts', async (req, res) => {
+        try {
+            const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            const { data, error } = await supabase.from('marketing_social_posts')
+                .select('id, account_id, platform, caption, media_url, media_type, status, provider_post_id, provider_url, error_message, created_by, published_at, created_at, updated_at')
+                .order('created_at', { ascending: false })
+                .limit(100);
+            if (error) throw new Error(`Unable to load social post history: ${error.message}`);
+            return res.json({ posts: data || [] });
+        } catch (error) {
+            console.error('AI dashboard social post history failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to load social post history.' });
+        }
+    });
+
+    app.post('/api/admin/ai/marketing/social/posts', async (req, res) => {
+        let postId = '';
+        try {
+            const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            if (!checkRateLimit(authorization.admin.id)) return res.status(429).json({ error: 'Too many marketing requests. Wait a minute and try again.' });
+            const { platform, accountId, caption, mediaUrl, mediaType, privacyLevel } = req.body || {};
+            if (!['instagram', 'facebook', 'tiktok'].includes(platform) ||
+                typeof caption !== 'string' || !caption.trim() || caption.trim().length > 2200 ||
+                !['image', 'video', 'text'].includes(mediaType)) {
+                return res.status(400).json({ error: 'Enter a caption, supported platform, and media type.' });
+            }
+            if (platform === 'instagram' && (mediaType !== 'image' || !validatePublicMediaUrl(mediaUrl))) {
+                return res.status(400).json({ error: 'Instagram publishing currently requires a publicly reachable HTTPS image URL.' });
+            }
+            if (platform === 'tiktok' && (!['image', 'video'].includes(mediaType) || !validatePublicMediaUrl(mediaUrl))) {
+                return res.status(400).json({ error: 'TikTok publishing requires a publicly reachable HTTPS image or video URL.' });
+            }
+            if (platform === 'facebook' && mediaType !== 'text' && !validatePublicMediaUrl(mediaUrl)) {
+                return res.status(400).json({ error: 'Facebook media must use a publicly reachable HTTPS URL.' });
+            }
+            const result = await getConnectedSocialAccount(accountId);
+            if (result.error) return res.status(result.status).json({ error: result.error });
+            const account = result.account;
+            if (account.platform !== platform) return res.status(400).json({ error: 'The selected account does not match the chosen platform.' });
+            const accessToken = await getSocialAccessToken(account);
+            let tiktokPrivacyOptions = [];
+            if (platform === 'tiktok') {
+                const creatorResponse = await parseSocialResponse(await fetch('https://open.tiktokapis.com/v2/post/publish/creator_info/query/', {
+                    method: 'POST',
+                    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({}),
+                }), 'TikTok creator info');
+                tiktokPrivacyOptions = creatorResponse.data?.privacy_level_options || [];
+                if (!tiktokPrivacyOptions.includes(privacyLevel)) {
+                    return res.status(400).json({ error: 'Choose a privacy setting currently allowed by this TikTok account.' });
+                }
+            }
+            const { data: post, error: insertError } = await supabase.from('marketing_social_posts').insert({
+                account_id: account.id,
+                platform,
+                caption: caption.trim(),
+                media_url: mediaType === 'text' ? null : mediaUrl,
+                media_type: mediaType,
+                status: 'publishing',
+                created_by: authorization.admin.id,
+            }).select('*').single();
+            if (insertError) throw new Error(`Unable to record social post: ${insertError.message}`);
+            postId = post.id;
+
+            let providerPostId = '';
+            let status = 'published';
+
+            if (platform === 'instagram') {
+                const graphUrl = `https://graph.facebook.com/${metaGraphVersion}`;
+                const container = await parseSocialResponse(await fetch(`${graphUrl}/${encodeURIComponent(account.external_account_id)}/media`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        image_url: mediaUrl,
+                        caption: caption.trim(),
+                        access_token: accessToken,
+                    }),
+                }), 'Instagram media container');
+                const published = await parseSocialResponse(await fetch(`${graphUrl}/${encodeURIComponent(account.external_account_id)}/media_publish`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ creation_id: container.id, access_token: accessToken }),
+                }), 'Instagram publish');
+                providerPostId = published.id;
+            } else if (platform === 'facebook') {
+                const path = mediaType === 'image' ? 'photos' : 'feed';
+                const params = mediaType === 'image'
+                    ? { url: mediaUrl, caption: caption.trim(), access_token: accessToken }
+                    : { message: caption.trim(), access_token: accessToken };
+                const published = await parseSocialResponse(await fetch(`https://graph.facebook.com/${metaGraphVersion}/${encodeURIComponent(account.external_account_id)}/${path}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams(params),
+                }), 'Facebook publish');
+                providerPostId = published.post_id || published.id;
+            } else {
+                const endpoint = mediaType === 'image'
+                    ? 'https://open.tiktokapis.com/v2/post/publish/content/init/'
+                    : 'https://open.tiktokapis.com/v2/post/publish/video/init/';
+                const payload = mediaType === 'image'
+                    ? {
+                        post_info: { title: caption.trim().slice(0, 150), description: caption.trim(), privacy_level: privacyLevel },
+                        source_info: { source: 'PULL_FROM_URL', photo_cover_index: 0, photo_images: [mediaUrl] },
+                        post_mode: 'DIRECT_POST',
+                        media_type: 'PHOTO',
+                    }
+                    : {
+                        post_info: { title: caption.trim().slice(0, 150), privacy_level: privacyLevel },
+                        source_info: { source: 'PULL_FROM_URL', video_url: mediaUrl },
+                    };
+                const published = await parseSocialResponse(await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json; charset=UTF-8' },
+                    body: JSON.stringify(payload),
+                }), 'TikTok publish');
+                providerPostId = published.data?.publish_id || '';
+                if (!providerPostId) throw new Error('TikTok did not return a publish job ID.');
+                status = 'processing';
+            }
+
+            const { data: savedPost, error: updateError } = await supabase.from('marketing_social_posts')
+                .update({
+                    provider_post_id: providerPostId || null,
+                    status,
+                    published_at: status === 'published' ? new Date().toISOString() : null,
+                    updated_at: new Date().toISOString(),
+                })
+                .eq('id', postId)
+                .select('*')
+                .single();
+            if (updateError) throw new Error(`Social post was submitted but its status could not be saved: ${updateError.message}`);
+            return res.status(201).json({ post: savedPost });
+        } catch (error) {
+            console.error('AI dashboard social publish failed:', error.message);
+            if (postId) {
+                const { error: updateError } = await supabase.from('marketing_social_posts')
+                    .update({ status: 'failed', error_message: String(error.message || 'Provider rejected the post.').slice(0, 2000), updated_at: new Date().toISOString() })
+                    .eq('id', postId);
+                if (updateError) console.error('AI dashboard could not record social publish failure:', updateError.message);
+            }
+            return res.status(502).json({ error: error.message || 'Unable to publish social post.' });
+        }
+    });
+
+    app.post('/api/admin/ai/marketing/social/posts/:postId/status', async (req, res) => {
+        try {
+            const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.postId)) {
+                return res.status(400).json({ error: 'Invalid social post ID.' });
+            }
+            const { data: post, error: loadError } = await supabase.from('marketing_social_posts')
+                .select('*, marketing_social_accounts!inner(access_token_ciphertext, token_expires_at, connected)')
+                .eq('id', req.params.postId)
+                .maybeSingle();
+            if (loadError) throw new Error(`Unable to load social post status: ${loadError.message}`);
+            if (!post) return res.status(404).json({ error: 'Social post not found.' });
+            if (post.platform !== 'tiktok' || post.status !== 'processing') return res.json({ post });
+            if (!post.marketing_social_accounts.connected) return res.status(409).json({ error: 'Reconnect the TikTok account to check this post status.' });
+            const socialAccountResult = await getConnectedSocialAccount(post.account_id);
+            if (socialAccountResult.error) return res.status(socialAccountResult.status).json({ error: socialAccountResult.error });
+            const accessToken = await getSocialAccessToken(socialAccountResult.account);
+            const statusResponse = await parseSocialResponse(await fetch('https://open.tiktokapis.com/v2/post/publish/status/fetch/', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ publish_id: post.provider_post_id }),
+            }), 'TikTok publish status');
+            const providerStatus = statusResponse.data?.status;
+            const status = providerStatus === 'PUBLISH_COMPLETE'
+                ? 'published'
+                : ['FAILED', 'PUBLISH_FAILED'].includes(providerStatus) ? 'failed' : 'processing';
+            const { data: savedPost, error: updateError } = await supabase.from('marketing_social_posts')
+                .update({
+                    status,
+                    error_message: status === 'failed' ? String(statusResponse.data?.fail_reason || 'TikTok could not publish this post.').slice(0, 2000) : null,
+                    published_at: status === 'published' ? new Date().toISOString() : null,
+                    updated_at: new Date().toISOString(),
+                })
+                .eq('id', post.id)
+                .select('id, account_id, platform, caption, media_url, media_type, status, provider_post_id, provider_url, error_message, created_by, published_at, created_at, updated_at')
+                .single();
+            if (updateError) throw new Error(`Unable to save TikTok post status: ${updateError.message}`);
+            return res.json({ post: savedPost });
+        } catch (error) {
+            console.error('AI dashboard social post status check failed:', error.message);
+            return res.status(500).json({ error: error.message || 'Unable to check social post status.' });
+        }
+    });
+
+    const executeLowStockAutomations = async ({ product, previousStock }) => {
+        const warnings = [];
+        try {
+            const { data: rules, error: rulesError } = await supabase
+                .from('automation_rules')
+                .select('id, name, trigger_config, action_config')
+                .eq('trigger_type', 'low_stock')
+                .eq('status', 'active')
+                .limit(100);
+            if (rulesError) {
+                console.error('AI dashboard could not load low-stock automation rules:', rulesError);
+                return ['Could not load automation rules after saving the product.'];
+            }
+
+            const eventId = crypto.randomUUID();
+            for (const rule of rules || []) {
+                const threshold = Number(rule.trigger_config?.threshold);
+                if (!Number.isInteger(threshold) || product.stock > threshold ||
+                    (previousStock !== null && previousStock <= threshold)) continue;
+
+                const eventContext = {
+                    productId: String(product.id),
+                    productName: String(product.name).slice(0, 200),
+                    previousStock,
+                    stock: product.stock,
+                    threshold,
+                };
+                const { data: run, error: runError } = await supabase
+                    .from('automation_runs')
+                    .insert({
+                        rule_id: rule.id,
+                        trigger_event_id: eventId,
+                        status: 'running',
+                        event_context: eventContext,
+                    })
+                    .select('id')
+                    .single();
+                if (runError) {
+                    console.error(`AI dashboard could not record automation "${rule.name}" run:`, runError);
+                    warnings.push(`Could not record the run for "${rule.name}".`);
+                    continue;
+                }
+
+                let deliveryError = '';
+                try {
+                    const recipientEmail = rule.action_config?.recipientEmail;
+                    if (!resend) throw new Error('Resend is not configured on the dashboard server.');
+                    if (typeof recipientEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
+                        throw new Error('The automation notification email is invalid.');
+                    }
+                    const emailResult = await resend.emails.send({
+                        from: `${EMAIL_APP_NAME} <${emailSenders.orders}>`,
+                        to: [recipientEmail],
+                        subject: `Low stock alert: ${eventContext.productName}`,
+                        text: `${eventContext.productName} has ${product.stock} unit${product.stock === 1 ? '' : 's'} in stock, at or below the configured threshold of ${threshold}.`,
+                        tags: [{ name: 'category', value: 'automation' }],
+                    });
+                    if (emailResult?.error) deliveryError = emailResult.error.message || 'Resend could not deliver the alert.';
+                } catch (error) {
+                    deliveryError = error.message || 'Unable to send the low-stock alert.';
+                }
+
+                const { error: updateError } = await supabase
+                    .from('automation_runs')
+                    .update({
+                        status: deliveryError ? 'failed' : 'succeeded',
+                        error_message: deliveryError ? deliveryError.slice(0, 2000) : null,
+                        finished_at: new Date().toISOString(),
+                    })
+                    .eq('id', run.id);
+                if (updateError) {
+                    console.error(`AI dashboard could not finalize automation "${rule.name}" run:`, updateError);
+                    warnings.push(`Could not record the final status for "${rule.name}".`);
+                }
+                if (deliveryError) {
+                    console.error(`AI dashboard automation "${rule.name}" email failed:`, deliveryError);
+                    warnings.push(`The low-stock alert for "${rule.name}" could not be sent.`);
+                }
+            }
+        } catch (error) {
+            console.error('AI dashboard low-stock automation processing failed after saving a product:', error);
+            warnings.push('Automation processing failed after saving the product.');
+        }
+        return warnings;
+    };
+
+    app.get('/api/admin/ai/automations', async (req, res) => {
+        try {
+            const authorization = await getAutomationAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            const [{ data: rules, error: rulesError }, { data: runs, error: runsError }] = await Promise.all([
+                supabase.from('automation_rules').select('*').order('created_at', { ascending: false }).limit(100),
+                supabase.from('automation_runs')
+                    .select('id, rule_id, status, event_context, error_message, triggered_at, finished_at')
+                    .order('triggered_at', { ascending: false })
+                    .limit(100),
+            ]);
+            if (rulesError) throw new Error(`Unable to load automation rules: ${rulesError.message}`);
+            if (runsError) throw new Error(`Unable to load automation runs: ${runsError.message}`);
+            return res.json({ rules: rules || [], runs: runs || [] });
+        } catch (error) {
+            console.error('AI dashboard automations load failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to load automations.' });
+        }
+    });
+
+    app.post('/api/admin/ai/automations', async (req, res) => {
+        try {
+            const authorization = await getAutomationAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            const validation = validateAutomationRule(req.body);
+            if (validation.error) return res.status(400).json({ error: validation.error });
+            if (validation.values.status === 'active' && !resend) {
+                return res.status(503).json({ error: 'Configure Resend on the dashboard server before activating email automations.' });
+            }
+            const { values } = validation;
+            const { data, error } = await supabase
+                .from('automation_rules')
+                .insert({
+                    name: values.name,
+                    trigger_type: 'low_stock',
+                    trigger_config: { threshold: values.threshold },
+                    action_type: 'email_admin',
+                    action_config: { recipientEmail: values.recipientEmail },
+                    status: values.status,
+                    created_by: authorization.admin.id,
+                    updated_by: authorization.admin.id,
+                })
+                .select('*')
+                .single();
+            if (error) throw new Error(`Unable to create automation: ${error.message}`);
+            return res.status(201).json({ rule: data });
+        } catch (error) {
+            console.error('AI dashboard automation create failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to create automation.' });
+        }
+    });
+
+    app.patch('/api/admin/ai/automations/:automationId', async (req, res) => {
+        try {
+            const authorization = await getAutomationAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.automationId)) {
+                return res.status(400).json({ error: 'Invalid automation ID.' });
+            }
+            const payload = req.body;
+            if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
+                Object.keys(payload).length === 0 ||
+                Object.keys(payload).some((field) => !automationFields.has(field))) {
+                return res.status(400).json({ error: 'Invalid automation update.' });
+            }
+            const { data: existing, error: loadError } = await supabase
+                .from('automation_rules')
+                .select('*')
+                .eq('id', req.params.automationId)
+                .maybeSingle();
+            if (loadError) throw new Error(`Unable to verify automation: ${loadError.message}`);
+            if (!existing) return res.status(404).json({ error: 'Automation not found.' });
+
+            const validation = validateAutomationRule({
+                name: existing.name,
+                threshold: existing.trigger_config?.threshold,
+                recipientEmail: existing.action_config?.recipientEmail,
+                status: existing.status,
+                ...payload,
+            });
+            if (validation.error) return res.status(400).json({ error: validation.error });
+            if (validation.values.status === 'active' && !resend) {
+                return res.status(503).json({ error: 'Configure Resend on the dashboard server before activating email automations.' });
+            }
+            const { values } = validation;
+            const { data, error } = await supabase
+                .from('automation_rules')
+                .update({
+                    name: values.name,
+                    trigger_config: { threshold: values.threshold },
+                    action_config: { recipientEmail: values.recipientEmail },
+                    status: values.status,
+                    updated_by: authorization.admin.id,
+                    updated_at: new Date().toISOString(),
+                })
+                .eq('id', req.params.automationId)
+                .select('*')
+                .maybeSingle();
+            if (error) throw new Error(`Unable to update automation: ${error.message}`);
+            if (!data) return res.status(404).json({ error: 'Automation not found.' });
+            return res.json({ rule: data });
+        } catch (error) {
+            console.error('AI dashboard automation update failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to update automation.' });
+        }
+    });
+
+    app.get('/api/admin/ai/marketing/campaigns', async (req, res) => {
+        try {
+            const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            const { data, error } = await supabase
+                .from('marketing_campaigns')
+                .select('*')
+                .order('created_at', { ascending: false })
+                .limit(500);
+            if (error) throw new Error(`Unable to load marketing campaigns: ${error.message}`);
+            return res.json({ campaigns: data || [] });
+        } catch (error) {
+            console.error('AI dashboard marketing campaigns load failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to load marketing campaigns.' });
+        }
+    });
+
+    app.post('/api/admin/ai/marketing/campaigns', async (req, res) => {
+        try {
+            const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            const validation = validateMarketingCampaign(req.body);
+            if (validation.error) return res.status(400).json({ error: validation.error });
+            const { data, error } = await supabase
+                .from('marketing_campaigns')
+                .insert({ ...validation.values, created_by: authorization.admin.id, updated_by: authorization.admin.id })
+                .select('*')
+                .single();
+            if (error) throw new Error(`Unable to create marketing campaign: ${error.message}`);
+            return res.status(201).json({ campaign: data });
+        } catch (error) {
+            console.error('AI dashboard marketing campaign create failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to create marketing campaign.' });
+        }
+    });
+
+    app.patch('/api/admin/ai/marketing/campaigns/:campaignId', async (req, res) => {
+        try {
+            const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.campaignId)) {
+                return res.status(400).json({ error: 'Invalid marketing campaign ID.' });
+            }
+            const { data: existing, error: loadError } = await supabase
+                .from('marketing_campaigns')
+                .select('*')
+                .eq('id', req.params.campaignId)
+                .maybeSingle();
+            if (loadError) throw new Error(`Unable to verify marketing campaign: ${loadError.message}`);
+            if (!existing) return res.status(404).json({ error: 'Marketing campaign not found.' });
+
+            const payload = req.body;
+            if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
+                Object.keys(payload).length === 0 ||
+                Object.keys(payload).some((field) => !marketingCampaignFields.has(field))) {
+                return res.status(400).json({ error: 'Invalid marketing campaign update.' });
+            }
+            const validation = validateMarketingCampaign({
+                name: existing.name,
+                channel: existing.channel,
+                goal: existing.goal,
+                status: existing.status,
+                audience: existing.audience,
+                budget: existing.budget,
+                startsOn: existing.starts_on,
+                endsOn: existing.ends_on,
+                notes: existing.notes,
+                ...payload,
+            });
+            if (validation.error) return res.status(400).json({ error: validation.error });
+            const { data, error } = await supabase
+                .from('marketing_campaigns')
+                .update({ ...validation.values, updated_by: authorization.admin.id, updated_at: new Date().toISOString() })
+                .eq('id', req.params.campaignId)
+                .select('*')
+                .maybeSingle();
+            if (error) throw new Error(`Unable to update marketing campaign: ${error.message}`);
+            if (!data) return res.status(404).json({ error: 'Marketing campaign not found.' });
+            return res.json({ campaign: data });
+        } catch (error) {
+            console.error('AI dashboard marketing campaign update failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to update marketing campaign.' });
+        }
     });
 
     app.get('/api/admin/ai/auth-config', (_req, res) => {
@@ -787,6 +1729,323 @@ export const registerAIDashboardRoutes = ({
         } catch (error) {
             console.error('AI dashboard wishlist load failed:', error);
             return res.status(500).json({ error: error.message || 'Unable to load wishlist demand.' });
+        }
+    });
+
+    app.get('/api/admin/ai/support/tickets', async (req, res) => {
+        try {
+            const authorization = await getAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            const { admin } = authorization;
+            const status = String(req.query.status || 'all');
+            const allowedStatuses = ['all', 'open', 'pending', 'resolved', 'closed'];
+            if (!allowedStatuses.includes(status)) {
+                return res.status(400).json({ error: 'Choose a valid support ticket status.' });
+            }
+
+            const requestedLimit = Number(req.query.limit || 50);
+            if (!Number.isInteger(requestedLimit) || requestedLimit < 1) {
+                return res.status(400).json({ error: 'The support ticket limit must be a positive integer.' });
+            }
+            const limit = Math.min(requestedLimit, 100);
+            const before = req.query.before ? String(req.query.before) : '';
+            if (before && !Number.isFinite(Date.parse(before))) {
+                return res.status(400).json({ error: 'The support ticket cursor is invalid.' });
+            }
+            const beforeId = req.query.beforeId ? String(req.query.beforeId) : '';
+            if (beforeId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(beforeId)) {
+                return res.status(400).json({ error: 'The support ticket cursor is invalid.' });
+            }
+
+            const scopeTickets = (query) => admin.role === 'admin' ? query : query.eq('assigned_to', admin.id);
+            let ticketQuery = scopeTickets(supabase
+                .from('support_tickets')
+                .select('*')
+                .order('last_message_at', { ascending: false })
+                .order('id', { ascending: false })
+                .limit(limit + 1));
+            if (status !== 'all') ticketQuery = ticketQuery.eq('status', status);
+            if (before) {
+                const cursorDate = new Date(before).toISOString();
+                ticketQuery = beforeId
+                    ? ticketQuery.or(`last_message_at.lt.${cursorDate},and(last_message_at.eq.${cursorDate},id.lt.${beforeId})`)
+                    : ticketQuery.lt('last_message_at', cursorDate);
+            }
+
+            const countForStatus = async (ticketStatus) => {
+                let countQuery = scopeTickets(supabase
+                    .from('support_tickets')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('status', ticketStatus));
+                const { count, error } = await countQuery;
+                if (error) throw new Error(`Unable to count ${ticketStatus} support tickets: ${error.message}`);
+                return count || 0;
+            };
+
+            const [{ data: rows, error: ticketError }, openCount, pendingCount, resolvedCount, agentsResult] = await Promise.all([
+                ticketQuery,
+                countForStatus('open'),
+                countForStatus('pending'),
+                countForStatus('resolved'),
+                admin.role === 'admin'
+                    ? supabase.from('users').select('id, username, role').in('role', ['admin', 'seller']).eq('status', 'active').order('username')
+                    : Promise.resolve({ data: [], error: null }),
+            ]);
+            if (ticketError) throw new Error(`Unable to load support inbox: ${ticketError.message}`);
+            if (agentsResult.error) throw new Error(`Unable to load support team: ${agentsResult.error.message}`);
+
+            const tickets = rows || [];
+            const hasMore = tickets.length > limit;
+            if (hasMore) tickets.pop();
+            return res.json({
+                tickets,
+                counts: { open: openCount, pending: pendingCount, resolved: resolvedCount },
+                agents: agentsResult.data || [],
+                hasMore,
+                nextBefore: hasMore && tickets.length
+                    ? { date: tickets[tickets.length - 1].last_message_at, id: tickets[tickets.length - 1].id }
+                    : null,
+            });
+        } catch (error) {
+            console.error('AI dashboard support inbox load failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to load the support inbox.' });
+        }
+    });
+
+    app.post('/api/admin/ai/support/tickets', async (req, res) => {
+        try {
+            const authorization = await getAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            const { admin } = authorization;
+            const body = req.body || {};
+            const customerName = String(body.customerName || '').trim();
+            const customerEmail = String(body.customerEmail || '').trim().toLowerCase();
+            const subject = String(body.subject || '').trim();
+            const description = String(body.description || '').trim();
+            const category = String(body.category || 'general');
+            const priority = String(body.priority || 'normal');
+            const orderReference = String(body.orderReference || '').trim();
+            const requestedAssignee = admin.role !== 'admin'
+                ? admin.id
+                : body.assignedTo === undefined ? admin.id : body.assignedTo;
+
+            if (!customerName || customerName.length > 160 ||
+                !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail) || customerEmail.length > 320 ||
+                !subject || subject.length > 240 || /[\r\n]/.test(subject) || !description || description.length > 8000 ||
+                !['orders', 'shipping', 'returns', 'product', 'general'].includes(category) ||
+                !['low', 'normal', 'high', 'urgent'].includes(priority) ||
+                orderReference.length > 120) {
+                return res.status(400).json({ error: 'Enter a valid customer, subject, and case description.' });
+            }
+            if (admin.role !== 'admin' && requestedAssignee !== admin.id) {
+                return res.status(403).json({ error: 'Sellers can only assign new tickets to themselves.' });
+            }
+            if (admin.role === 'admin' && requestedAssignee !== null) {
+                if (typeof requestedAssignee !== 'string' || !requestedAssignee.trim() || requestedAssignee.length > 160) {
+                    return res.status(400).json({ error: 'Choose a valid support assignee.' });
+                }
+                const { data: assignee, error: assigneeError } = await supabase
+                    .from('users')
+                    .select('id')
+                    .eq('id', requestedAssignee.trim())
+                    .in('role', ['admin', 'seller'])
+                    .eq('status', 'active')
+                    .maybeSingle();
+                if (assigneeError) throw new Error(`Unable to verify support assignee: ${assigneeError.message}`);
+                if (!assignee) return res.status(400).json({ error: 'Choose an active administrator or seller to assign the ticket.' });
+            }
+
+            const { data: ticket, error } = await supabase
+                .from('support_tickets')
+                .insert({
+                    customer_name: customerName,
+                    customer_email: customerEmail,
+                    subject,
+                    description,
+                    category,
+                    priority,
+                    order_reference: orderReference || null,
+                    assigned_to: admin.role === 'admin' ? requestedAssignee : admin.id,
+                    created_by: admin.id,
+                    last_message_preview: description.slice(0, 240),
+                })
+                .select('*')
+                .single();
+            if (error) throw new Error(`Unable to create support ticket: ${error.message}`);
+            return res.status(201).json({ ticket });
+        } catch (error) {
+            console.error('AI dashboard support ticket creation failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to create the support ticket.' });
+        }
+    });
+
+    app.get('/api/admin/ai/support/tickets/:ticketId', async (req, res) => {
+        try {
+            const authorization = await getAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            const result = await getSupportTicket(supabase, authorization.admin, String(req.params.ticketId || ''));
+            if (result.error) return res.status(result.status).json({ error: result.error });
+
+            const { data: messages, error } = await supabase
+                .from('support_messages')
+                .select('*')
+                .eq('ticket_id', result.ticket.id)
+                .order('created_at', { ascending: false })
+                .limit(100);
+            if (error) throw new Error(`Unable to load support conversation: ${error.message}`);
+            return res.json({ ticket: result.ticket, messages: (messages || []).reverse() });
+        } catch (error) {
+            console.error('AI dashboard support ticket load failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to load the support ticket.' });
+        }
+    });
+
+    app.patch('/api/admin/ai/support/tickets/:ticketId', async (req, res) => {
+        try {
+            const authorization = await getAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            const { admin } = authorization;
+            const result = await getSupportTicket(supabase, admin, String(req.params.ticketId || ''));
+            if (result.error) return res.status(result.status).json({ error: result.error });
+
+            const body = req.body || {};
+            const update = {};
+            if (Object.hasOwn(body, 'status')) {
+                if (!['open', 'pending', 'resolved', 'closed'].includes(body.status)) {
+                    return res.status(400).json({ error: 'Choose a valid support ticket status.' });
+                }
+                update.status = body.status;
+            }
+            if (Object.hasOwn(body, 'priority')) {
+                if (!['low', 'normal', 'high', 'urgent'].includes(body.priority)) {
+                    return res.status(400).json({ error: 'Choose a valid support ticket priority.' });
+                }
+                update.priority = body.priority;
+            }
+            if (Object.hasOwn(body, 'assignedTo')) {
+                if (admin.role !== 'admin') return res.status(403).json({ error: 'Only administrators can reassign support tickets.' });
+                if (body.assignedTo !== null) {
+                    if (typeof body.assignedTo !== 'string' || !body.assignedTo.trim() || body.assignedTo.length > 160) {
+                        return res.status(400).json({ error: 'Choose a valid support assignee.' });
+                    }
+                    const { data: assignee, error: assigneeError } = await supabase
+                        .from('users')
+                        .select('id')
+                        .eq('id', body.assignedTo.trim())
+                        .in('role', ['admin', 'seller'])
+                        .eq('status', 'active')
+                        .maybeSingle();
+                    if (assigneeError) throw new Error(`Unable to verify support assignee: ${assigneeError.message}`);
+                    if (!assignee) return res.status(400).json({ error: 'Choose an active administrator or seller to assign the ticket.' });
+                }
+                update.assigned_to = body.assignedTo;
+            }
+            if (!Object.keys(update).length) {
+                return res.status(400).json({ error: 'Provide a valid support ticket field to update.' });
+            }
+            update.updated_at = new Date().toISOString();
+            const { data: ticket, error } = await supabase
+                .from('support_tickets')
+                .update(update)
+                .eq('id', result.ticket.id)
+                .select('*')
+                .single();
+            if (error) throw new Error(`Unable to update support ticket: ${error.message}`);
+            return res.json({ ticket });
+        } catch (error) {
+            console.error('AI dashboard support ticket update failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to update the support ticket.' });
+        }
+    });
+
+    app.post('/api/admin/ai/support/tickets/:ticketId/messages', async (req, res) => {
+        try {
+            const authorization = await getAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            const { admin } = authorization;
+            const result = await getSupportTicket(supabase, admin, String(req.params.ticketId || ''));
+            if (result.error) return res.status(result.status).json({ error: result.error });
+
+            const messageBody = String(req.body?.body || '').trim();
+            const messageType = String(req.body?.messageType || '');
+            if (!messageBody || messageBody.length > 8000 || !['reply', 'note'].includes(messageType)) {
+                return res.status(400).json({ error: 'Enter a message of up to 8,000 characters and choose reply or internal note.' });
+            }
+            if (messageType === 'reply' && !resend) {
+                return res.status(503).json({ error: 'Customer email replies require Resend to be configured on the dashboard server.' });
+            }
+
+            const { data: message, error: insertError } = await supabase
+                .from('support_messages')
+                .insert({
+                    ticket_id: result.ticket.id,
+                    author_id: admin.id,
+                    author_name: String(admin.username || 'Support team').slice(0, 160),
+                    body: messageBody,
+                    message_type: messageType,
+                    delivery_status: messageType === 'reply' ? 'pending' : 'not_applicable',
+                })
+                .select('*')
+                .single();
+            if (insertError) throw new Error(`Unable to save support message: ${insertError.message}`);
+
+            let deliveryError = '';
+            if (messageType === 'reply') {
+                try {
+                    const emailResult = await resend.emails.send({
+                        from: `${EMAIL_APP_NAME} <${emailSenders.support}>`,
+                        to: [result.ticket.customer_email],
+                        reply_to: emailSenders.support,
+                        subject: `Re: ${result.ticket.subject}`,
+                        html: buildManualEmailHtml({
+                            subject: `Re: ${result.ticket.subject}`,
+                            userName: result.ticket.customer_name,
+                            message: messageBody,
+                        }),
+                        text: messageBody,
+                        tags: [{ name: 'category', value: 'support' }],
+                    });
+                    if (emailResult?.error) deliveryError = emailResult.error.message || 'Resend could not deliver the customer reply.';
+                } catch (error) {
+                    deliveryError = error.message || 'Resend could not deliver the customer reply.';
+                }
+            }
+
+            if (messageType === 'reply') {
+                const { data: updatedMessage, error: updateError } = await supabase
+                    .from('support_messages')
+                    .update({
+                        delivery_status: deliveryError ? 'failed' : 'sent',
+                        delivery_error: deliveryError || null,
+                    })
+                    .eq('id', message.id)
+                    .select('*')
+                    .single();
+                if (updateError) throw new Error(`The reply was saved but delivery status could not be recorded: ${updateError.message}`);
+                Object.assign(message, updatedMessage);
+            }
+
+            const now = new Date().toISOString();
+            const ticketUpdate = {
+                updated_at: now,
+                last_message_at: now,
+                last_message_preview: messageBody.slice(0, 240),
+                last_message_type: messageType,
+            };
+            if (messageType === 'reply' && result.ticket.status === 'open') ticketUpdate.status = 'pending';
+            const { error: ticketUpdateError } = await supabase
+                .from('support_tickets')
+                .update(ticketUpdate)
+                .eq('id', result.ticket.id);
+            if (ticketUpdateError) throw new Error(`The message was saved but ticket activity could not be updated: ${ticketUpdateError.message}`);
+
+            if (deliveryError) {
+                return res.status(502).json({ error: deliveryError, message });
+            }
+            return res.status(201).json({ message });
+        } catch (error) {
+            console.error('AI dashboard support message send failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to save the support message.' });
         }
     });
 
@@ -929,6 +2188,63 @@ export const registerAIDashboardRoutes = ({
         } catch (error) {
             console.error('AI dashboard manual email send failed:', error);
             return res.status(500).json({ error: error.message || 'Unable to send the email.' });
+        }
+    });
+
+    app.get('/api/admin/ai/integrations', async (req, res) => {
+        try {
+            const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+
+            let databaseStatus = 'connected';
+            const { error } = await supabase
+                .from('ai_dashboard_settings')
+                .select('id')
+                .eq('id', 1)
+                .maybeSingle();
+            if (error) {
+                console.error('AI dashboard Supabase integration health check failed:', error);
+                databaseStatus = 'needs_attention';
+            }
+
+            const integrations = [
+                {
+                    id: 'supabase',
+                    name: 'Supabase',
+                    category: 'Store data & identity',
+                    status: databaseStatus,
+                    description: 'The dashboard API reads and manages authorized store records through the server-side Supabase service.',
+                    capabilities: ['Store data', 'Dashboard authentication'],
+                },
+                {
+                    id: 'gemini',
+                    name: 'Google Gemini',
+                    category: 'AI reporting',
+                    status: genAI ? 'ready' : 'not_configured',
+                    description: 'Generates read-only store reports and product insights for the AI Command Center.',
+                    capabilities: ['AI reports', 'Catalog insights'],
+                },
+                {
+                    id: 'resend',
+                    name: 'Resend',
+                    category: 'Email delivery',
+                    status: resend ? 'ready' : 'not_configured',
+                    description: 'Delivers administrator email, customer support replies, and configured low-stock alerts.',
+                    capabilities: ['Support replies', 'Admin email', 'Automation alerts'],
+                },
+                {
+                    id: 'cloudinary',
+                    name: 'Cloudinary',
+                    category: 'Product media',
+                    status: cloudinary.apiKey && cloudinary.apiSecret && cloudinary.cloudName ? 'ready' : 'not_configured',
+                    description: 'Provides short-lived signed upload parameters for product image uploads.',
+                    capabilities: ['Product image uploads'],
+                },
+            ];
+            return res.json({ integrations, checkedAt: new Date().toISOString() });
+        } catch (error) {
+            console.error('AI dashboard integration status load failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to load integration status.' });
         }
     });
 
@@ -1213,6 +2529,7 @@ export const registerAIDashboardRoutes = ({
                 if (error) console.warn('AI dashboard store action could not be written to the legacy audit log:', error.message);
             };
             let result;
+            let automationWarnings = [];
             if (action === 'update-order-status') {
                 const statuses = isAdmin
                     ? ['pending', 'confirmed', 'packing', 'billing', 'shipped', 'arrived', 'delivered', 'cancelled']
@@ -1421,6 +2738,12 @@ export const registerAIDashboardRoutes = ({
                 const { data, error } = await query;
                 if (error) throw new Error(`Unable to save product: ${error.message}`);
                 result = data;
+                if (!previous || Number(previous.stock) !== stock) {
+                    automationWarnings = await executeLowStockAutomations({
+                        product: data,
+                        previousStock: previous ? Number(previous.stock) : null,
+                    });
+                }
             } else if (action === 'add-product-category') {
                 const category = String(payload.category || '').trim();
                 if (!category || category.length > 80) return res.status(400).json({ error: 'Enter a category name of up to 80 characters.' });
@@ -1440,7 +2763,7 @@ export const registerAIDashboardRoutes = ({
             } else {
                 return res.status(400).json({ error: 'Unsupported store management action.' });
             }
-            return res.json({ result });
+            return res.json({ result, automationWarnings });
         } catch (error) {
             console.error('AI dashboard store management action failed:', error);
             return res.status(error.status || 500).json({ error: error.message || 'Unable to complete store management action.' });

@@ -12,17 +12,22 @@ const AICommandCenterPage = lazy(() => import('./pages/AICommandCenterPage').the
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage').then((module) => ({ default: module.AnalyticsPage })));
 const AuditLogsPage = lazy(() => import('./pages/AuditLogsPage').then((module) => ({ default: module.AuditLogsPage })));
 const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage').then((module) => ({ default: module.AdminUsersPage })));
+const ApprovalsPage = lazy(() => import('./pages/ApprovalsPage').then((module) => ({ default: module.ApprovalsPage })));
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage })));
 const EmailPage = lazy(() => import('./pages/EmailPage').then((module) => ({ default: module.EmailPage })));
 const FeaturePlaceholderPage = lazy(() => import('./pages/FeaturePlaceholderPage').then((module) => ({ default: module.FeaturePlaceholderPage })));
 const HeroSlidesPage = lazy(() => import('./pages/HeroSlidesPage').then((module) => ({ default: module.HeroSlidesPage })));
 const InventoryPage = lazy(() => import('./pages/InventoryPage').then((module) => ({ default: module.InventoryPage })));
+const IntegrationsPage = lazy(() => import('./pages/IntegrationsPage').then((module) => ({ default: module.IntegrationsPage })));
 const JournalPage = lazy(() => import('./pages/JournalPage').then((module) => ({ default: module.JournalPage })));
+const MarketingSeoPage = lazy(() => import('./pages/MarketingSeoPage').then((module) => ({ default: module.MarketingSeoPage })));
 const OrdersPage = lazy(() => import('./pages/OrdersPage').then((module) => ({ default: module.OrdersPage })));
 const BillingPage = lazy(() => import('./pages/OrdersPage').then((module) => ({ default: module.BillingPage })));
 const PolicyPage = lazy(() => import('./pages/PolicyPage').then((module) => ({ default: module.PolicyPage })));
 const ProductsPage = lazy(() => import('./pages/ProductsPage').then((module) => ({ default: module.ProductsPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })));
+const CustomerSupportPage = lazy(() => import('./pages/CustomerSupportPage').then((module) => ({ default: module.CustomerSupportPage })));
+const AutomationsPage = lazy(() => import('./pages/AutomationsPage').then((module) => ({ default: module.AutomationsPage })));
 const UsagePage = lazy(() => import('./pages/UsagePage').then((module) => ({ default: module.UsagePage })));
 const WishlistsPage = lazy(() => import('./pages/WishlistsPage').then((module) => ({ default: module.WishlistsPage })));
 
@@ -42,12 +47,12 @@ const navGroups = [
         { id: 'hero-slides', label: 'Hero Slides', icon: Image, adminOnly: true },
         { id: 'journal', label: 'Cultural Journal', icon: BookOpen, adminOnly: true },
         { id: 'policy', label: 'Commission Policy', icon: Coins, adminOnly: true },
-        { id: 'customer-support', label: 'Customer Support', icon: CircleHelp, unavailable: true },
-        { id: 'marketing-seo', label: 'Marketing & SEO', icon: Megaphone, unavailable: true },
-        { id: 'automations', label: 'Automations', icon: Workflow, unavailable: true },
-        { id: 'approvals', label: 'Approvals', icon: ClipboardCheck, unavailable: true },
+        { id: 'customer-support', label: 'Customer Support', icon: CircleHelp },
+        { id: 'marketing-seo', label: 'Marketing & SEO', icon: Megaphone, adminOnly: true },
+        { id: 'automations', label: 'Automations', icon: Workflow, adminOnly: true },
+        { id: 'approvals', label: 'Approvals', icon: ClipboardCheck, adminOnly: true },
         { id: 'analytics', label: 'Analytics & Reports', icon: Activity },
-        { id: 'integrations', label: 'Integrations', icon: Plug, unavailable: true },
+        { id: 'integrations', label: 'Integrations', icon: Plug, adminOnly: true },
     ],
     [
         { id: 'usage', label: 'AI Usage & Costs', icon: Coins },
@@ -57,9 +62,8 @@ const navGroups = [
 ];
 
 const placeholderContent = {
-    'customer-support': { title: 'Customer Support', description: 'Support workflows and customer conversation tools.' },
     'marketing-seo': { title: 'Marketing & SEO', description: 'Campaign planning and search optimization tools.' },
-    automations: { title: 'Automations', description: 'Scheduled and event-driven store workflows.' },
+    automations: { title: 'Automations', description: 'Event-driven inventory alerts and workflow history.' },
     approvals: { title: 'Approvals', description: 'Review queue for proposed store actions.' },
     integrations: { title: 'Integrations', description: 'Connections to external store tools and services.' },
 };
@@ -126,6 +130,9 @@ export const DashboardApp = ({ currentUser, onSignOut }) => {
         try {
             const result = await aiDashboardService.runStoreAction(action, payload, currentUser.emailAdminToken);
             await Promise.all([loadManagement(), loadOverview()]);
+            if (result.automationWarnings?.length) {
+                setError(`Product saved, but automation processing needs attention: ${result.automationWarnings.join(' ')}`);
+            }
             return result;
         } catch (actionError) {
             setError(actionError.message || 'Unable to complete store management action.');
@@ -135,7 +142,7 @@ export const DashboardApp = ({ currentUser, onSignOut }) => {
 
     useEffect(() => { loadOverview(true); }, [loadOverview]);
     useEffect(() => {
-        if (['products', 'inventory', 'orders', 'billing', 'users', 'policy', 'hero-slides', 'journal'].includes(route)) {
+        if (['products', 'inventory', 'orders', 'billing', 'users', 'policy', 'hero-slides', 'journal', 'marketing-seo', 'approvals'].includes(route)) {
             loadManagement().catch(() => {});
         }
     }, [loadManagement, route]);
@@ -269,9 +276,11 @@ export const DashboardApp = ({ currentUser, onSignOut }) => {
                 return <BillingPage orders={management?.orders || []} currentUser={currentUser} onAction={runStoreAction} loading={managementLoading} />;
             case 'wishlists':
                 return <WishlistsPage token={currentUser.emailAdminToken} />;
+            case 'customer-support':
+                return <CustomerSupportPage token={currentUser.emailAdminToken} isAdmin={currentUser.role === 'admin'} />;
             case 'users':
                 return currentUser.role === 'admin'
-                    ? <AdminUsersPage users={management?.users || []} currentUser={currentUser} onAction={runStoreAction} loading={managementLoading} />
+                    ? <AdminUsersPage users={management?.users || []} currentUser={currentUser} onAction={runStoreAction} loading={managementLoading} goTo={goTo} />
                     : <FeaturePlaceholderPage title="Administrator access required" description="Only store administrators can manage artisan and user accounts." goTo={goTo} />;
             case 'hero-slides':
                 return currentUser.role === 'admin'
@@ -289,6 +298,22 @@ export const DashboardApp = ({ currentUser, onSignOut }) => {
                 return currentUser.role === 'admin'
                     ? <PolicyPage commission={management?.globalCommission ?? 12} onAction={runStoreAction} loading={managementLoading} />
                     : <FeaturePlaceholderPage title="Administrator access required" description="Only store administrators can manage store commission policy." goTo={goTo} />;
+            case 'marketing-seo':
+                return currentUser.role === 'admin'
+                    ? <MarketingSeoPage products={management?.products || []} token={currentUser.emailAdminToken} onReviewProducts={() => goTo('products')} />
+                    : <FeaturePlaceholderPage title="Administrator access required" description="Only store administrators can manage marketing campaigns and store-wide SEO." goTo={goTo} />;
+            case 'automations':
+                return currentUser.role === 'admin'
+                    ? <AutomationsPage token={currentUser.emailAdminToken} />
+                    : <FeaturePlaceholderPage title="Administrator access required" description="Only store administrators can configure store automations." goTo={goTo} />;
+            case 'approvals':
+                return currentUser.role === 'admin'
+                    ? <ApprovalsPage users={management?.users || []} currentUser={currentUser} onAction={runStoreAction} loading={managementLoading} />
+                    : <FeaturePlaceholderPage title="Administrator access required" description="Only store administrators can review seller requests." goTo={goTo} />;
+            case 'integrations':
+                return currentUser.role === 'admin'
+                    ? <IntegrationsPage token={currentUser.emailAdminToken} />
+                    : <FeaturePlaceholderPage title="Administrator access required" description="Only store administrators can view service integrations." goTo={goTo} />;
             case 'analytics':
                 return <AnalyticsPage store={store} />;
             case 'usage':

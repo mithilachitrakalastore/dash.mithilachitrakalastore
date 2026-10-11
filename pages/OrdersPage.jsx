@@ -18,7 +18,7 @@ const Invoice = ({ order, onClose }) => (
                             <img className="h-12 w-12 rounded-lg object-contain" src="https://res.cloudinary.com/djmbuuz28/image/upload/v1761108817/logo.png" alt="Mithila Chitrakala Store" />
                             <div><h1 className="font-playfair text-xl font-black tracking-tight sm:text-2xl">Mithila Chitrakala Store</h1><p className="text-[8px] font-black uppercase tracking-[.25em] text-[#5c1111]/75">Premium Heritage Registry</p></div>
                         </div>
-                        <div className="text-[9px] leading-relaxed text-stone-500">MCS Central Hub, Ward 13<br />Janakpur Dham, Nepal<br />PAN No: 14450215<br />contact@mithilachitrakalastore.com.np</div>
+                        <div className="text-[9px] leading-relaxed text-stone-500">MCS Central Hub, Ward 13<br />Janakpur Dham, Nepal<br />PAN No: 14450215<br />Contact No.+977 9818270104<br />contact@mithilachitrakalastore.com.np</div>
                     </div>
                     <div className="text-right">
                         <h2 className="font-playfair text-2xl font-black italic uppercase text-stone-200 sm:text-4xl print:text-stone-300">Tax Invoice</h2>

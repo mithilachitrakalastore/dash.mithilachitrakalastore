@@ -136,6 +136,7 @@ registerAIDashboardRoutes({
     genAI,
     model: geminiModel,
     verifyAdminToken,
+    tokenSecret,
     hashPassword,
     createAdminToken,
     createGoogleLinkGrant,
