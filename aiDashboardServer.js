@@ -120,6 +120,33 @@ const buildManualEmailHtml = ({ subject, userName, message }) => `
               <td width="25%" align="center" style="padding:12px 4px;border-top:1px solid #c7664e;border-left:1px solid #eee5d6;font-size:10px;line-height:1.5;color:#53606a">Handmade<br />With Love</td>
             </tr></table></td></tr>
             <tr>
+              <td align="center" style="padding:20px 16px 4px;text-align:center">
+                <p style="margin:0 0 10px;font-size:11px;line-height:1.5;font-weight:bold;letter-spacing:1px;color:#70665b">FOLLOW US</p>
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto;border-collapse:separate;border-spacing:6px 0">
+                  <tr>
+                    <td align="center" bgcolor="#fffdfa" style="padding:10px 8px;border:1px solid #e8dfd0">
+                      <a href="https://www.instagram.com/mithilachitrakalastore" style="color:#53606a;text-decoration:none;font-size:11px;line-height:1.5">
+                        <img src="https://cdn.simpleicons.org/instagram/E4405F" width="34" height="34" alt="Instagram" style="display:block;width:34px;height:34px;margin:0 auto 6px;border:0;background:transparent" />
+                        Instagram<br /><span style="color:#a94e2b">@mithilachitrakalastore</span>
+                      </a>
+                    </td>
+                    <td align="center" bgcolor="#fffdfa" style="padding:10px 8px;border:1px solid #e8dfd0">
+                      <a href="https://www.facebook.com/profile.php?id=61578104247563" style="color:#53606a;text-decoration:none;font-size:11px;line-height:1.5">
+                        <img src="https://cdn.simpleicons.org/facebook/1877F2" width="34" height="34" alt="Facebook" style="display:block;width:34px;height:34px;margin:0 auto 6px;border:0;background:transparent" />
+                        Facebook<br /><span style="color:#a94e2b">Mithila Chitrakala Store</span>
+                      </a>
+                    </td>
+                    <td align="center" bgcolor="#fffdfa" style="padding:10px 8px;border:1px solid #e8dfd0">
+                      <a href="https://www.tiktok.com/@mithilachitrakalastore" style="color:#53606a;text-decoration:none;font-size:11px;line-height:1.5">
+                        <img src="https://cdn.simpleicons.org/tiktok/000000" width="34" height="34" alt="TikTok" style="display:block;width:34px;height:34px;margin:0 auto 6px;border:0;background:transparent" />
+                        TikTok<br /><span style="color:#a94e2b">@mithilachitrakalastore</span>
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
               <td align="center" bgcolor="#f3eedf" style="padding:18px 20px 20px;background:#f3eedf;text-align:center">
                 <a href="${EMAIL_STORE_URL}" style="color:#53606a;text-decoration:none;font-size:12px">mithilachitrakalastore.com.np</a>
                 <p style="margin:8px 0 0;font-size:11px;line-height:1.5;color:#777066">&copy; ${new Date().getFullYear()} ${EMAIL_APP_NAME}</p>
