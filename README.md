@@ -6,7 +6,7 @@ This folder is a separately deployable full-stack application. Its React client 
 
 1. Review and run `schema.sql` in the Supabase SQL editor. It adds a nullable Google Auth user ID to `public.users` with a unique index (without modifying existing users), creates the dashboard settings/audit tables, and adds an atomic daily/monthly request-budget reservation function.
 2. Create a Node web service from the `AI_Dashbord` folder. Set the build command to `npm install && npm run build` and the start command to `npm start`. The service uses the host-provided `PORT`.
-3. Set these server environment variables on that service: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `GEMINI_API_KEY`, `ADMIN_EMAIL_TOKEN_SECRET`, and, only for cross-origin frontend hosting, `AI_DASHBOARD_ORIGINS`. The anon key is public, but the dashboard loads it from its API config endpoint rather than embedding it in the frontend build. Do not set secrets as `VITE_*` variables.
+3. Set these server environment variables on that service: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `GEMINI_API_KEY`, `RESEND_API_KEY`, `ADMIN_EMAIL_TOKEN_SECRET`, and, only for cross-origin frontend hosting, `AI_DASHBOARD_ORIGINS`. The anon key is public, but the dashboard loads it from its API config endpoint rather than embedding it in the frontend build. Do not set secrets as `VITE_*` variables. Optional `EMAIL_HELLO`, `EMAIL_ORDERS`, `EMAIL_SUPPORT`, and `EMAIL_SECURITY` values override the corresponding verified sender addresses.
 4. For a single service serving both the app and API, leave `VITE_API_BASE_URL=/api`. If you host the frontend separately, set its build-time `VITE_API_BASE_URL` to the AI API service origin plus `/api`, and configure `AI_DASHBOARD_ORIGINS` on the API server to the exact frontend HTTPS origin.
 5. Sign in with Google or an existing active, verified store seller or administrator username/email and password. Sellers have the same dashboard and settings permissions as administrators. Google must be enabled as an OAuth provider in the same Supabase project used by the storefront. Add the dashboard's deployed origin (for example `https://admin.example.com`) to Supabase Auth's allowed redirect URLs. For an account whose Google email does not match its store email, enter the existing account credentials and choose **Link Google to this store account**. The API verifies the password and issues a five-minute signed grant; after Google verifies the identity, the API links that Supabase Auth user ID to the existing store account. Google sign-in cannot create or promote accounts, or activate inactive/unverified sellers or administrators. The API validates the Supabase access token before issuing a 12-hour dashboard token. The signed dashboard session is stored in tab-scoped session storage, re-verified with the API after a page reload, and cleared when the tab closes or the user signs out.
 
@@ -28,6 +28,7 @@ Add these environment variables to the Render service:
 | `SUPABASE_SERVICE_ROLE_KEY` | The existing service-role key (secret; server only) |
 | `SUPABASE_ANON_KEY` | The project's public anon key, used to initialize Google OAuth |
 | `GEMINI_API_KEY` | The existing Gemini API key (secret; server only) |
+| `RESEND_API_KEY` | Resend API key for administrator email sending (secret; server only) |
 | `ADMIN_EMAIL_TOKEN_SECRET` | A newly generated, private random signing secret |
 | `GEMINI_MODEL` | `gemini-3.8-flash` (or a model enabled for your Gemini account) |
 | `AI_DASHBOARD_ORIGINS` | Leave unset for the single-service same-origin setup; otherwise the exact dashboard site origin |
@@ -41,10 +42,13 @@ The frontend default `VITE_API_BASE_URL=/api` is correct when Render serves the 
 
 - Authenticated, server-verified active-seller and active-admin endpoints.
 - Authenticated management API for seller-owned products/orders and admin-managed global order fulfillment, billing/payment verification, seller payouts, artisan account status, and commission policy. Mutating requests verify the signed dashboard session and enforce role and seller ownership server-side.
+- The Wishlists page summarizes product saves and customer interest for the full store for administrators, or only products owned by the signed-in seller.
+- Administrator-only Hero Slides and Cultural Journal pages create, edit, publish, and remove homepage slides and journal posts through role-checked management actions.
 - The Billing & Print page renders a printable invoice for orders the signed-in seller/admin can access.
+- The administrator-only Email page sends custom text/HTML emails or published Resend templates, with server-side recipient validation, sender/reply-to selection, automatic template variables, and the Resend API key kept off the client.
 - Store overview cards for sales and orders today, registered customers, low inventory, a seven-day sales trend, recent orders, and top-selling items, sourced from existing Supabase records.
 - Active sellers and administrators can use the same store-wide dashboard, including shared AI usage limits and pause controls.
-- Sidebar navigation opens separate, refresh-safe dashboard pages for the dashboard, AI reports, product and inventory management, orders, billing/print, artisan activation, commission policy, analytics, usage, audit logs, and settings. Search also covers products and recent orders.
+- Sidebar navigation opens separate, refresh-safe dashboard pages for the dashboard, AI reports, product and inventory management, orders, billing/print, wishlists, email, homepage hero slides, the cultural journal, artisan activation, commission policy, analytics, usage, audit logs, and settings. Search also covers products and recent orders.
 - Customer Support, Marketing & SEO, Automations, Approvals, and Integrations have individual navigation pages but remain clearly marked as not connected until their API workflows are implemented.
 - A separate seller/admin login API with bounded request size, IP-based sign-in throttling, and no database credentials in the client.
 - CORS restriction for cross-origin frontend access when `AI_DASHBOARD_ORIGINS` is configured. Same-origin deployments do not need a CORS entry.
@@ -57,7 +61,7 @@ The frontend default `VITE_API_BASE_URL=/api` is correct when Render serves the 
 
 ## Not yet migrated from the legacy seller/admin panel
 
-Hero slide and journal/blog editing, manual email/template tools, wishlists, store-name approval, product image upload, and automation scheduling remain in the legacy seller/admin panel or are not connected to the standalone dashboard yet. Do not treat those sidebar placeholder areas as active workflows. The standalone app does not expose customer-account editing or payment credential management.
+Store-name approval, product image upload, and automation scheduling remain in the legacy seller/admin panel or are not connected to the standalone dashboard yet. Do not treat those sidebar placeholder areas as active workflows. The standalone app does not expose customer-account editing or payment credential management.
 
 The schema defaults to 40 requests/day and 600/month. Limits, low-stock threshold, and provider price estimates are configurable in the dashboard. Costs remain unestimated until input and output price-per-million-token settings are entered.
 

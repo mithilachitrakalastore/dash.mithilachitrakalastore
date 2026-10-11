@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    Activity, Bell, Boxes, ChevronDown, CircleHelp, ClipboardCheck, ClipboardList,
-    Coins, Database, LayoutDashboard, LoaderCircle, Megaphone, Package, Plug,
+    Activity, Bell, BookOpen, Boxes, ChevronDown, CircleHelp, ClipboardCheck, ClipboardList,
+    Coins, Database, Heart, Image, LayoutDashboard, LoaderCircle, Mail, Megaphone, Package, Plug,
     Printer, Search, Settings, ShieldCheck, ShoppingBag, Sparkles, Store,
     Users, Workflow,
 } from 'lucide-react';
@@ -13,14 +13,18 @@ const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage').then((module) =
 const AuditLogsPage = lazy(() => import('./pages/AuditLogsPage').then((module) => ({ default: module.AuditLogsPage })));
 const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage').then((module) => ({ default: module.AdminUsersPage })));
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage })));
+const EmailPage = lazy(() => import('./pages/EmailPage').then((module) => ({ default: module.EmailPage })));
 const FeaturePlaceholderPage = lazy(() => import('./pages/FeaturePlaceholderPage').then((module) => ({ default: module.FeaturePlaceholderPage })));
+const HeroSlidesPage = lazy(() => import('./pages/HeroSlidesPage').then((module) => ({ default: module.HeroSlidesPage })));
 const InventoryPage = lazy(() => import('./pages/InventoryPage').then((module) => ({ default: module.InventoryPage })));
+const JournalPage = lazy(() => import('./pages/JournalPage').then((module) => ({ default: module.JournalPage })));
 const OrdersPage = lazy(() => import('./pages/OrdersPage').then((module) => ({ default: module.OrdersPage })));
 const BillingPage = lazy(() => import('./pages/OrdersPage').then((module) => ({ default: module.BillingPage })));
 const PolicyPage = lazy(() => import('./pages/PolicyPage').then((module) => ({ default: module.PolicyPage })));
 const ProductsPage = lazy(() => import('./pages/ProductsPage').then((module) => ({ default: module.ProductsPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })));
 const UsagePage = lazy(() => import('./pages/UsagePage').then((module) => ({ default: module.UsagePage })));
+const WishlistsPage = lazy(() => import('./pages/WishlistsPage').then((module) => ({ default: module.WishlistsPage })));
 
 const navGroups = [
     [
@@ -32,7 +36,11 @@ const navGroups = [
         { id: 'inventory', label: 'Inventory', icon: Boxes },
         { id: 'orders', label: 'Orders', icon: ShoppingBag },
         { id: 'billing', label: 'Billing & Print', icon: Printer },
+        { id: 'wishlists', label: 'Wishlists', icon: Heart },
         { id: 'users', label: 'Artisans & Users', icon: Users, adminOnly: true },
+        { id: 'email', label: 'Email', icon: Mail, adminOnly: true },
+        { id: 'hero-slides', label: 'Hero Slides', icon: Image, adminOnly: true },
+        { id: 'journal', label: 'Cultural Journal', icon: BookOpen, adminOnly: true },
         { id: 'policy', label: 'Commission Policy', icon: Coins, adminOnly: true },
         { id: 'customer-support', label: 'Customer Support', icon: CircleHelp, unavailable: true },
         { id: 'marketing-seo', label: 'Marketing & SEO', icon: Megaphone, unavailable: true },
@@ -127,7 +135,7 @@ export const DashboardApp = ({ currentUser, onSignOut }) => {
 
     useEffect(() => { loadOverview(true); }, [loadOverview]);
     useEffect(() => {
-        if (['products', 'inventory', 'orders', 'billing', 'users', 'policy'].includes(route)) {
+        if (['products', 'inventory', 'orders', 'billing', 'users', 'policy', 'hero-slides', 'journal'].includes(route)) {
             loadManagement().catch(() => {});
         }
     }, [loadManagement, route]);
@@ -259,10 +267,24 @@ export const DashboardApp = ({ currentUser, onSignOut }) => {
                 return <OrdersPage orders={management?.orders || store.recentOrders || []} searchTerm={searchTerm} currentUser={currentUser} onAction={runStoreAction} loading={managementLoading} />;
             case 'billing':
                 return <BillingPage orders={management?.orders || []} currentUser={currentUser} onAction={runStoreAction} loading={managementLoading} />;
+            case 'wishlists':
+                return <WishlistsPage token={currentUser.emailAdminToken} />;
             case 'users':
                 return currentUser.role === 'admin'
                     ? <AdminUsersPage users={management?.users || []} currentUser={currentUser} onAction={runStoreAction} loading={managementLoading} />
                     : <FeaturePlaceholderPage title="Administrator access required" description="Only store administrators can manage artisan and user accounts." goTo={goTo} />;
+            case 'hero-slides':
+                return currentUser.role === 'admin'
+                    ? <HeroSlidesPage slides={management?.heroSlides || []} onAction={runStoreAction} loading={managementLoading} />
+                    : <FeaturePlaceholderPage title="Administrator access required" description="Only store administrators can manage homepage hero slides." goTo={goTo} />;
+            case 'journal':
+                return currentUser.role === 'admin'
+                    ? <JournalPage posts={management?.journalPosts || []} onAction={runStoreAction} loading={managementLoading} />
+                    : <FeaturePlaceholderPage title="Administrator access required" description="Only store administrators can manage cultural journal posts." goTo={goTo} />;
+            case 'email':
+                return currentUser.role === 'admin'
+                    ? <EmailPage token={currentUser.emailAdminToken} />
+                    : <FeaturePlaceholderPage title="Administrator access required" description="Only active store administrators can send customer emails." goTo={goTo} />;
             case 'policy':
                 return currentUser.role === 'admin'
                     ? <PolicyPage commission={management?.globalCommission ?? 12} onAction={runStoreAction} loading={managementLoading} />

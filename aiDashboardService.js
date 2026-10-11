@@ -35,7 +35,14 @@ export const aiDashboardService = {
     verifySession: (token) => request('/admin/ai/session/verify', token, { method: 'POST' }),
     getOverview: (token) => request('/admin/ai/overview', token),
     getStoreManagement: (token) => request('/admin/ai/store-management', token),
+    getWishlists: (token) => request('/admin/ai/wishlists', token),
     getCloudinaryUploadSignature: (token) => request('/admin/ai/cloudinary/signature', token),
+    getEmailTemplates: (token) => request('/admin/ai/email/templates', token),
+    getEmailTemplate: (templateId, token) => request(`/admin/ai/email/templates/${encodeURIComponent(templateId)}`, token),
+    sendAdminEmail: (payload, token) => request('/admin/ai/email/send', token, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    }),
     runStoreAction: (action, payload, token) => request('/admin/ai/store-management/action', token, {
         method: 'POST',
         body: JSON.stringify({ action, payload }),

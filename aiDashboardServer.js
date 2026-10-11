@@ -1,11 +1,136 @@
 import crypto from 'node:crypto';
+import { Resend } from 'resend';
 
 const MAX_PROMPT_LENGTH = 1500;
 const MAX_PRODUCTS_TO_SCAN = 2000;
 const MAX_REPORT_ROWS = 40;
 const REQUESTS_PER_MINUTE = 8;
+const EMAIL_APP_NAME = 'Mithila Chitrakala Store';
+const EMAIL_STORE_URL = 'https://mithilachitrakalastore.com.np';
+const EMAIL_LOGO_URL = 'https://res.cloudinary.com/djmbuuz28/image/upload/v1761108817/logo.png';
+const AUTO_EMAIL_TEMPLATE_VARIABLES = new Set(['USER_NAME', 'USER_EMAIL', 'APP_NAME', 'CREATED_DATE', 'YEAR']);
 const requestWindows = new Map();
 const sessionWindows = new Map();
+
+const escapeHtml = (value = '') => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
+const htmlToPlainText = (html = '') => String(html)
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6])\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#039;/gi, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s+/g, '\n')
+    .trim();
+
+const formatEmailDate = (dateValue) => {
+    const date = new Date(dateValue);
+    return new Intl.DateTimeFormat('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+    }).format(date);
+};
+
+const buildEmailTemplateVariables = ({ userName, userEmail, createdDate, supportEmail }) => ({
+    APP_NAME: EMAIL_APP_NAME,
+    CREATED_DATE: formatEmailDate(createdDate),
+    USER_EMAIL: userEmail,
+    USER_NAME: userName,
+    YEAR: new Date().getFullYear(),
+    WEBSITE_URL: 'https://mithilachitrakalastore.com.np',
+    SUPPORT_EMAIL: supportEmail,
+    PRIVACY: 'https://mithilachitrakalastore.com.np/privacy',
+});
+
+const resolveRecipientName = async (supabase, recipient) => {
+    const { data: profile, error } = await supabase
+        .from('users')
+        .select('name, username')
+        .eq('email', recipient.toLowerCase())
+        .maybeSingle();
+    if (error) console.warn('[email] Could not resolve recipient profile name:', error.message);
+
+    const localPart = recipient.split('@')[0] || '';
+    const fallbackName = localPart.replace(/[._+-]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+    return String(profile?.name || profile?.username || fallbackName || 'Customer').trim();
+};
+
+const buildBrandHtml = () => `
+    <tr>
+      <td align="center" bgcolor="#f3eedf" style="padding:24px 20px 20px;background:#f3eedf;text-align:center">
+        <p style="margin:0 0 15px;font-family:Arial,Helvetica,sans-serif;font-size:10px;line-height:1.5;letter-spacing:1.4px;color:#70665b">AUTHENTIC MITHILA ART &nbsp; · &nbsp; HANDMADE WITH LOVE &nbsp; · &nbsp; NEPAL</p>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto;border-collapse:collapse">
+          <tr>
+            <td valign="middle" style="padding-right:12px">
+              <img src="${EMAIL_LOGO_URL}" width="62" height="62" alt="Mithila Chitrakala Store logo" style="display:block;width:62px;height:62px;border:0;object-fit:contain" />
+            </td>
+            <td valign="middle" align="left" style="text-align:left">
+              <p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:27px;line-height:1.1;color:#211d1a">Mithila Chitrakala</p>
+              <p style="margin:5px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.3;letter-spacing:6px;color:#b64734">S T O R E</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+    <tr><td height="7" bgcolor="#b64734" style="height:7px;background:#b64734;font-size:0;line-height:0">&nbsp;</td></tr>`;
+
+const buildManualEmailHtml = ({ subject, userName, message }) => `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>${escapeHtml(subject)}</title></head>
+    <body style="margin:0;padding:0;background:#f3eedf;font-family:Arial,Helvetica,sans-serif;color:#292522">
+      <div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all">${escapeHtml(subject)}</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f3eedf" style="width:100%;background:#f3eedf;border-collapse:collapse">
+        <tr><td align="center" style="padding:28px 12px">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#fffdfa" style="max-width:640px;width:100%;background:#fffdfa;border:1px solid #e8dfd0;border-collapse:separate;border-spacing:0">
+            ${buildBrandHtml()}
+            <tr>
+              <td align="center" style="padding:30px 34px 8px;text-align:center">
+                <p style="margin:0;font-size:10px;line-height:1.5;letter-spacing:2px;color:#b64734;font-weight:bold">A NOTE FROM OUR TEAM</p>
+                <h1 style="margin:10px 0 8px;font-family:Georgia,'Times New Roman',serif;font-size:30px;line-height:1.2;color:#211d1a">${escapeHtml(subject)}</h1>
+                <p style="margin:0;font-size:15px;line-height:1.7;color:#53606a">A personal message from ${EMAIL_APP_NAME}.</p>
+              </td>
+            </tr>
+            <tr><td style="padding:22px 34px 12px"><p style="margin:0;font-size:15px;line-height:1.7;color:#353b40">Hello ${escapeHtml(userName)},</p></td></tr>
+            <tr>
+              <td style="padding:0 22px 22px">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f8f4eb" style="width:100%;background:#f8f4eb;border:1px solid #eee5d6;border-collapse:separate;border-spacing:0">
+                  <tr><td style="padding:20px 18px;font-size:15px;line-height:1.8;color:#3e454b">${escapeHtml(message).replace(/\r\n?|\n/g, '<br />')}</td></tr>
+                </table>
+              </td>
+            </tr>
+            <tr><td style="padding:0 34px 24px"><p style="margin:0;font-size:14px;line-height:1.7;color:#53606a">Warm regards,<br /><strong style="color:#292522">The Mithila Chitrakala Store Team</strong></p></td></tr>
+            <tr><td style="padding:0 22px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse"><tr>
+              <td width="25%" align="center" style="padding:12px 4px;border-top:1px solid #c7664e;font-size:10px;line-height:1.5;color:#53606a">Authentic<br />Mithila Art</td>
+              <td width="25%" align="center" style="padding:12px 4px;border-top:1px solid #c7664e;border-left:1px solid #eee5d6;font-size:10px;line-height:1.5;color:#53606a">Support<br />Local Artists</td>
+              <td width="25%" align="center" style="padding:12px 4px;border-top:1px solid #c7664e;border-left:1px solid #eee5d6;font-size:10px;line-height:1.5;color:#53606a">Nationwide<br />Delivery</td>
+              <td width="25%" align="center" style="padding:12px 4px;border-top:1px solid #c7664e;border-left:1px solid #eee5d6;font-size:10px;line-height:1.5;color:#53606a">Handmade<br />With Love</td>
+            </tr></table></td></tr>
+            <tr>
+              <td align="center" bgcolor="#f3eedf" style="padding:18px 20px 20px;background:#f3eedf;text-align:center">
+                <a href="${EMAIL_STORE_URL}" style="color:#53606a;text-decoration:none;font-size:12px">mithilachitrakalastore.com.np</a>
+                <p style="margin:8px 0 0;font-size:11px;line-height:1.5;color:#777066">&copy; ${new Date().getFullYear()} ${EMAIL_APP_NAME}</p>
+              </td>
+            </tr>
+            <tr><td height="7" bgcolor="#b64734" style="height:7px;background:#b64734;font-size:0;line-height:0">&nbsp;</td></tr>
+          </table>
+        </td></tr>
+      </table>
+    </body>
+    </html>`;
 
 const getKathmanduDayStart = () => {
     const parts = new Intl.DateTimeFormat('en-CA', {
@@ -87,6 +212,15 @@ const getAdmin = async (req, supabase, verifyAdminToken) => {
         return { error: 'Only active administrators and sellers can use the AI dashboard.', status: 403 };
     }
     return { admin };
+};
+
+const getEmailAdmin = async (req, supabase, verifyAdminToken) => {
+    const authorization = await getAdmin(req, supabase, verifyAdminToken);
+    if (authorization.error) return authorization;
+    if (authorization.admin.role !== 'admin') {
+        return { error: 'Only active administrators can use manual email tools.', status: 403 };
+    }
+    return authorization;
 };
 
 const getAdminById = async (supabase, adminId) => {
@@ -534,6 +668,14 @@ export const registerAIDashboardRoutes = ({
     verifyGoogleLinkGrant,
     cloudinary = {},
 }) => {
+    const emailSenders = {
+        hello: process.env.EMAIL_HELLO || 'hello@mithilachitrakalastore.com.np',
+        orders: process.env.EMAIL_ORDERS || 'orders@mithilachitrakalastore.com.np',
+        support: process.env.EMAIL_SUPPORT || 'support@mithilachitrakalastore.com.np',
+        security: process.env.EMAIL_SECURITY || 'security@mithilachitrakalastore.com.np',
+    };
+    const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+
     app.use('/api/admin/ai', (req, res, next) => {
         res.set('Cache-Control', 'no-store');
         next();
@@ -546,6 +688,220 @@ export const registerAIDashboardRoutes = ({
             return res.status(503).json({ error: 'Google sign-in is not configured on the AI dashboard server.' });
         }
         return res.json({ supabaseUrl, supabaseAnonKey });
+    });
+
+    app.get('/api/admin/ai/email/templates', async (req, res) => {
+        try {
+            const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            if (!resend) return res.status(503).json({ error: 'Resend is not configured on the dashboard server.' });
+
+            const { data, error } = await resend.templates.list({ limit: 100 });
+            if (error) return res.status(502).json({ error: error.message || 'Unable to retrieve Resend templates.' });
+            return res.json({ templates: (data?.data || []).filter((template) => template.status === 'published') });
+        } catch (error) {
+            console.error('AI dashboard Resend template list failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to retrieve Resend templates.' });
+        }
+    });
+
+    app.get('/api/admin/ai/wishlists', async (req, res) => {
+        try {
+            const authorization = await getAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            const { admin } = authorization;
+            const pageSize = 1000;
+            const maxRows = 20_000;
+            let offset = 0;
+            let wishlistCount = 0;
+            let truncated = false;
+            const demand = new Map();
+
+            while (offset < maxRows) {
+                let query = supabase
+                    .from('wishlists')
+                    .select('product:products!productId!inner(id, name, image, price, seller_id), customer:users!userId(name)')
+                    .order('addedAt', { ascending: false })
+                    .order('id', { ascending: true })
+                    .range(offset, offset + pageSize - 1);
+                if (admin.role !== 'admin') query = query.eq('product.seller_id', admin.id);
+
+                const { data, error } = await query;
+                if (error) throw new Error(`Unable to load wishlist demand: ${error.message}`);
+                const rows = data || [];
+                wishlistCount += rows.length;
+                for (const row of rows) {
+                    const product = row.product;
+                    if (!product) continue;
+                    const key = String(product.id);
+                    if (!demand.has(key)) demand.set(key, { product, count: 0, customers: [], customersTruncated: false });
+                    const productDemand = demand.get(key);
+                    productDemand.count += 1;
+                    if (row.customer?.name) {
+                        if (productDemand.customers.length < 50) {
+                            productDemand.customers.push(String(row.customer.name));
+                        } else {
+                            productDemand.customersTruncated = true;
+                        }
+                    }
+                }
+
+                if (rows.length < pageSize) break;
+                offset += pageSize;
+                if (offset >= maxRows) truncated = true;
+            }
+
+            return res.json({
+                products: [...demand.values()].sort((a, b) => b.count - a.count),
+                wishlistCount,
+                truncated,
+            });
+        } catch (error) {
+            console.error('AI dashboard wishlist load failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to load wishlist demand.' });
+        }
+    });
+
+    app.get('/api/admin/ai/email/templates/:templateId', async (req, res) => {
+        try {
+            const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            if (!resend) return res.status(503).json({ error: 'Resend is not configured on the dashboard server.' });
+
+            const templateId = String(req.params.templateId || '').trim();
+            if (!templateId || templateId.length > 200) {
+                return res.status(400).json({ error: 'A valid Resend template is required.' });
+            }
+            const { data, error } = await resend.templates.get(templateId);
+            if (error) return res.status(502).json({ error: error.message || 'Unable to retrieve the Resend template.' });
+            if (data?.status !== 'published') {
+                return res.status(400).json({ error: 'Only published Resend templates can be sent.' });
+            }
+            return res.json({ template: data });
+        } catch (error) {
+            console.error('AI dashboard Resend template detail failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to retrieve the Resend template.' });
+        }
+    });
+
+    app.post('/api/admin/ai/email/send', async (req, res) => {
+        try {
+            const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            if (!resend) return res.status(503).json({ error: 'Resend is not configured on the dashboard server.' });
+
+            const {
+                to,
+                subject,
+                message,
+                category = 'general',
+                sender = 'hello',
+                replyTo = 'support',
+                template = '',
+                templateMode = 'custom',
+                templateVariables = {},
+                isHtml = false,
+            } = req.body || {};
+            const recipient = String(to || '').trim();
+            const emailSubject = String(subject || '').trim();
+            const emailBody = String(message || '').trim();
+            const templateId = String(template || '').trim();
+            const emailCategory = String(category || 'general').trim();
+
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient) || recipient.length > 320) {
+                return res.status(400).json({ error: 'Enter a valid recipient email address.' });
+            }
+            if (!['custom', 'template'].includes(templateMode)) {
+                return res.status(400).json({ error: 'Choose a valid email mode.' });
+            }
+            if (!['security', 'support', 'general', 'orders', 'welcome'].includes(emailCategory)) {
+                return res.status(400).json({ error: 'Choose a valid email category.' });
+            }
+            if (!Object.hasOwn(emailSenders, sender) || !Object.hasOwn(emailSenders, replyTo)) {
+                return res.status(400).json({ error: 'Choose a valid sender and reply-to address.' });
+            }
+            if (templateMode === 'template' ? !templateId || templateId.length > 200 : !emailSubject || emailSubject.length > 998 || !emailBody || emailBody.length > 8000) {
+                return res.status(400).json({ error: 'Recipient, subject, and the selected email content are required.' });
+            }
+            if (templateMode === 'template' && emailSubject.length > 998) {
+                return res.status(400).json({ error: 'The subject override is too long.' });
+            }
+            if (templateMode === 'custom' && typeof isHtml !== 'boolean') {
+                return res.status(400).json({ error: 'Choose a valid email content type.' });
+            }
+
+            const fromAddress = emailSenders[sender];
+            const replyAddress = emailSenders[replyTo];
+            const payload = {
+                from: `${EMAIL_APP_NAME} <${fromAddress}>`,
+                to: [recipient],
+                reply_to: replyAddress,
+                tags: [{ name: 'category', value: emailCategory }],
+            };
+
+            if (templateMode === 'template') {
+                const { data: templateDetails, error: templateError } = await resend.templates.get(templateId);
+                if (templateError) return res.status(502).json({ error: templateError.message || 'Unable to retrieve the selected Resend template.' });
+                if (templateDetails?.status !== 'published') {
+                    return res.status(400).json({ error: 'The selected Resend template must be published before it can be sent.' });
+                }
+
+                const userName = await resolveRecipientName(supabase, recipient);
+                const defaults = buildEmailTemplateVariables({
+                    userName,
+                    userEmail: recipient,
+                    createdDate: new Date().toISOString(),
+                    supportEmail: emailSenders.support,
+                });
+                const requestedVariables = templateVariables && typeof templateVariables === 'object' && !Array.isArray(templateVariables)
+                    ? templateVariables
+                    : {};
+                const variables = Object.create(null);
+
+                for (const variable of templateDetails.variables || []) {
+                    const isAutomatic = AUTO_EMAIL_TEMPLATE_VARIABLES.has(variable.key);
+                    const requestedValue = isAutomatic ? undefined : requestedVariables[variable.key];
+                    const fallbackValue = defaults[variable.key] ?? variable.fallback_value;
+                    const value = requestedValue === undefined || requestedValue === '' ? fallbackValue : requestedValue;
+                    if (value === undefined || value === null || value === '') {
+                        return res.status(400).json({ error: `Enter a value for template variable "${variable.key}".` });
+                    }
+                    if (typeof value === 'object') {
+                        return res.status(400).json({ error: `Template variable "${variable.key}" must be a text or number value.` });
+                    }
+                    if (variable.type === 'number') {
+                        const numericValue = Number(value);
+                        if (!Number.isFinite(numericValue)) {
+                            return res.status(400).json({ error: `Template variable "${variable.key}" must be a number.` });
+                        }
+                        variables[variable.key] = numericValue;
+                    } else {
+                        variables[variable.key] = String(value);
+                    }
+                }
+
+                payload.template = { id: templateId, variables };
+                if (emailSubject) payload.subject = emailSubject;
+            } else {
+                const isHtmlMessage = isHtml === true;
+                const userName = await resolveRecipientName(supabase, recipient);
+                const html = isHtmlMessage
+                    ? emailBody
+                    : buildManualEmailHtml({ subject: emailSubject, userName, message: emailBody });
+                payload.subject = emailSubject;
+                payload.html = html;
+                payload.text = isHtmlMessage ? htmlToPlainText(html) : emailBody;
+            }
+
+            const result = await resend.emails.send(payload);
+            if (result?.error) {
+                return res.status(502).json({ error: result.error.message || 'Unable to send the email through Resend.' });
+            }
+            return res.json({ success: true, message: templateMode === 'template' ? 'Template email sent successfully.' : 'Manual email sent successfully.' });
+        } catch (error) {
+            console.error('AI dashboard manual email send failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to send the email.' });
+        }
     });
 
     app.get('/api/admin/ai/cloudinary/signature', async (req, res) => {
@@ -819,6 +1175,15 @@ export const registerAIDashboardRoutes = ({
                     throw error;
                 }
             };
+            const writeStoreLog = async (message) => {
+                const { error } = await supabase.from('logs').insert({
+                    id: `l-${crypto.randomBytes(5).toString('hex')}`,
+                    action: message,
+                    admin_id: admin.id,
+                    timestamp: new Date().toISOString(),
+                });
+                if (error) console.warn('AI dashboard store action could not be written to the legacy audit log:', error.message);
+            };
             let result;
             if (action === 'update-order-status') {
                 const statuses = isAdmin
@@ -863,6 +1228,84 @@ export const registerAIDashboardRoutes = ({
                     .select('globalCommission').single();
                 if (error) throw new Error(`Unable to save global commission: ${error.message}`);
                 result = { success: true, globalCommission: Number(data.globalCommission) };
+            } else if (action === 'save-hero-slide') {
+                requireAdmin();
+                const slide = payload.slide || {};
+                const id = slide.id ? String(slide.id).trim() : `h-${crypto.randomBytes(5).toString('hex')}`;
+                const ctaLabel = String(slide.cta_label ?? slide.cta ?? '').trim();
+                const ctaLink = String(slide.cta_link ?? slide.link ?? '').trim();
+                const image = String(slide.image || '').trim();
+                const sortOrder = Number(slide.sort_order ?? 0);
+                if (id.length > 200 || !ctaLabel || ctaLabel.length > 120 || !ctaLink || ctaLink.length > 2000 ||
+                    !image || image.length > 4000 || !Number.isInteger(sortOrder) || sortOrder < 0 ||
+                    typeof slide.active !== 'boolean') {
+                    return res.status(400).json({ error: 'Enter a button label, safe link, image URL, non-negative sort order, and active status.' });
+                }
+                if (!((ctaLink.startsWith('/') && !ctaLink.startsWith('//')) || /^https?:\/\//i.test(ctaLink)) ||
+                    !((image.startsWith('/') && !image.startsWith('//')) || /^https?:\/\//i.test(image))) {
+                    return res.status(400).json({ error: 'Slide links and images must use a relative path or an HTTP(S) URL.' });
+                }
+                const { data, error } = await supabase.from('hero_slides').upsert({
+                    id,
+                    cta_label: ctaLabel,
+                    cta_link: ctaLink,
+                    image,
+                    sort_order: sortOrder,
+                    active: slide.active,
+                }).select('*').single();
+                if (error) throw new Error(`Unable to save hero slide: ${error.message}`);
+                await writeStoreLog(`Admin saved hero slide "${ctaLabel}"`);
+                result = data;
+            } else if (action === 'delete-hero-slide') {
+                requireAdmin();
+                const id = String(payload.slideId || '').trim();
+                if (!id || id.length > 200) return res.status(400).json({ error: 'A valid hero slide ID is required.' });
+                const { data, error } = await supabase.from('hero_slides').delete().eq('id', id).select('id').maybeSingle();
+                if (error) throw new Error(`Unable to delete hero slide: ${error.message}`);
+                if (!data) return res.status(404).json({ error: 'Hero slide not found.' });
+                await writeStoreLog(`Admin deleted hero slide ${id}`);
+                result = { success: true };
+            } else if (action === 'save-journal-post') {
+                requireAdmin();
+                const post = payload.post || {};
+                const title = String(post.title || '').trim();
+                const slug = String(post.slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')).trim();
+                const excerpt = String(post.excerpt || '').trim();
+                const body = String(post.body || '').trim();
+                const image = String(post.image || '').trim();
+                if (!title || title.length > 200 || !slug || slug.length > 180 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) ||
+                    excerpt.length > 5000 || !body || body.length > 100_000 || image.length > 4000 ||
+                    typeof post.published !== 'boolean') {
+                    return res.status(400).json({ error: 'Enter a valid title, slug, article body, and publish status. Titles are limited to 200 characters, slugs to 180, excerpts to 5,000, and article bodies to 100,000.' });
+                }
+                const postData = { slug, title, excerpt, body, image, published: post.published };
+                const postId = post.id ? String(post.id).trim() : '';
+                let query;
+                if (postId) {
+                    if (postId.length > 200) return res.status(400).json({ error: 'A valid journal post ID is required.' });
+                    const { data: existing, error: lookupError } = await supabase.from('journal_posts').select('id').eq('id', postId).maybeSingle();
+                    if (lookupError) throw new Error(`Unable to verify journal post: ${lookupError.message}`);
+                    if (!existing) return res.status(404).json({ error: 'Journal post not found.' });
+                    query = supabase.from('journal_posts').update(postData).eq('id', postId).select('*').single();
+                } else {
+                    query = supabase.from('journal_posts').insert({
+                        ...postData,
+                        id: `j-${crypto.randomBytes(5).toString('hex')}`,
+                    }).select('*').single();
+                }
+                const { data, error } = await query;
+                if (error) throw new Error(`Unable to save journal post: ${error.message}`);
+                await writeStoreLog(`Admin saved journal post "${title}"`);
+                result = data;
+            } else if (action === 'delete-journal-post') {
+                requireAdmin();
+                const id = String(payload.postId || '').trim();
+                if (!id || id.length > 200) return res.status(400).json({ error: 'A valid journal post ID is required.' });
+                const { data, error } = await supabase.from('journal_posts').delete().eq('id', id).select('id').maybeSingle();
+                if (error) throw new Error(`Unable to delete journal post: ${error.message}`);
+                if (!data) return res.status(404).json({ error: 'Journal post not found.' });
+                await writeStoreLog(`Admin deleted journal post ${id}`);
+                result = { success: true };
             } else if (action === 'set-user-status') {
                 requireAdmin();
                 if (!['active', 'disabled', 'pending'].includes(payload.status) || !payload.userId || payload.userId === admin.id) {

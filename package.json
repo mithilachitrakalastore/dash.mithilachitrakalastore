@@ -18,7 +18,8 @@
     "express": "^5.2.1",
     "lucide-react": "^1.28.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "resend": "^6.32.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

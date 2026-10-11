@@ -120,7 +120,7 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization'],
     methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
 }));
-app.use(express.json({ limit: '10kb' }));
+app.use(express.json({ limit: '512kb' }));
 
 app.get('/api/health', (_req, res) => {
     res.json({
