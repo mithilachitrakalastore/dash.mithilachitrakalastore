@@ -144,6 +144,21 @@ registerAIDashboardRoutes({
     cloudinary,
 });
 
+const distPath = path.join(__dirname, 'dist');
+if (!fs.existsSync(path.join(distPath, 'index.html'))) {
+    console.error('AI dashboard build is missing. Run "npm run build" before starting the server.');
+    process.exit(1);
+}
+app.use(express.static(distPath));
+
+app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'AI dashboard API endpoint not found.' });
+});
+
+app.get(/.*/, (_req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+});
+
 app.listen(PORT, () => {
     console.log(`AI Dashboard server is running on port ${PORT}`);
 });
