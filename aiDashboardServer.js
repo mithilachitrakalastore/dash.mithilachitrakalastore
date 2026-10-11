@@ -1008,7 +1008,8 @@ export const registerAIDashboardRoutes = ({
             if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
             if (!checkRateLimit(authorization.admin.id)) return res.status(429).json({ error: 'Too many marketing requests. Wait a minute and try again.' });
             const { provider } = req.params;
-            if (!['meta', 'tiktok'].includes(provider)) return res.status(400).json({ error: 'Choose Meta or TikTok to connect.' });
+            if (provider === 'tiktok') return res.status(410).json({ error: 'TikTok account connections are temporarily unavailable.' });
+            if (provider !== 'meta') return res.status(400).json({ error: 'Choose Meta to connect.' });
             if (!getSocialTokenEncryptionKey()) {
                 return res.status(503).json({ error: 'Configure SOCIAL_TOKEN_ENCRYPTION_KEY on the dashboard server before connecting social accounts.' });
             }

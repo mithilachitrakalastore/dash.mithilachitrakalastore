@@ -31,7 +31,7 @@ const cloudinary = {
     apiSecret: process.env.CLOUDINARY_API_SECRET || '',
     cloudName: process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME || '',
 };
-const allowedOrigins = String(process.env.AI_DASHBOARD_ORIGINS || '')
+const allowedOrigins = String(process.env.AI_DASHBOARD_PUBLIC_URL || '')
     .split(',')
     .map((origin) => origin.trim().replace(/\/+$/, ''))
     .filter(Boolean);
@@ -144,25 +144,6 @@ registerAIDashboardRoutes({
     cloudinary,
 });
 
-const distPath = path.join(__dirname, 'dist');
-if (!fs.existsSync(path.join(distPath, 'index.html'))) {
-    console.error('AI dashboard build is missing. Run "npm run build" before starting the server.');
-    process.exit(1);
-}
-app.use(express.static(distPath));
-
-app.use('/api', (_req, res) => {
-    res.status(404).json({ error: 'AI dashboard API endpoint not found.' });
-});
-
-app.get(/.*/, (_req, res) => {
-    res.sendFile(path.join(distPath, 'index.html'));
-});
-
 app.listen(PORT, () => {
-    console.log(`AI dashboard server listening on port ${PORT}`);
-    if (!genAI) console.warn('GEMINI_API_KEY is not configured; AI report requests will be unavailable.');
-    if (isProduction && allowedOrigins.length === 0) {
-        console.warn('AI_DASHBOARD_ORIGINS is empty; cross-origin dashboard access is disabled.');
-    }
+    console.log(`AI Dashboard server is running on port ${PORT}`);
 });

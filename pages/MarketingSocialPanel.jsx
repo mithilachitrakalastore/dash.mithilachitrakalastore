@@ -21,7 +21,7 @@ const statusLabel = { draft: 'Draft', publishing: 'Publishing', processing: 'Pro
 export const MarketingSocialPanel = ({ token, products = [] }) => {
     const [accounts, setAccounts] = useState([]);
     const [posts, setPosts] = useState([]);
-    const [providers, setProviders] = useState({ meta: false, tiktok: false, encryption: false, publicUrlConfigured: false });
+    const [providers, setProviders] = useState({ meta: false, encryption: false, publicUrlConfigured: false });
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState('');
     const [error, setError] = useState('');
@@ -158,13 +158,12 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                     <button type="button" disabled={!providers.meta || !providers.encryption || !providers.publicUrlConfigured || busy !== ''} onClick={() => connect('meta')} className="inline-flex items-center gap-1.5 rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-[9px] font-bold text-slate-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-45"><Share2 size={12} />Connect Meta</button>
-                    <button type="button" disabled={!providers.tiktok || !providers.encryption || !providers.publicUrlConfigured || busy !== ''} onClick={() => connect('tiktok')} className="inline-flex items-center gap-1.5 rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-[9px] font-bold text-slate-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-45">♪ Connect TikTok</button>
                 </div>
             </div>
 
             {(error || notice) && <div role={error ? 'alert' : 'status'} className={`mb-3 rounded-md border px-3 py-2 text-[10px] ${error ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>{error || notice}</div>}
 
-            {(!providers.meta || !providers.tiktok || !providers.encryption || !providers.publicUrlConfigured) && <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[9px] leading-4 text-amber-900"><ShieldCheck size={13} className="mt-0.5 shrink-0" /><span>Connections need server-only Meta/TikTok app credentials, `AI_DASHBOARD_PUBLIC_URL`, and a 32-byte social-token encryption key. Platform review/permissions may also be required. Never put these secrets in frontend `VITE_*` settings.</span></div>}
+            {(!providers.meta || !providers.encryption || !providers.publicUrlConfigured) && <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[9px] leading-4 text-amber-900"><ShieldCheck size={13} className="mt-0.5 shrink-0" /><span>Meta connections need server-only app credentials, `AI_DASHBOARD_PUBLIC_URL`, and a 32-byte social-token encryption key. Platform review/permissions may also be required. Never put these secrets in frontend `VITE_*` settings.</span></div>}
 
             {loading ? <p className="py-6 text-center text-[10px] text-slate-500"><LoaderCircle size={13} className="mr-1 inline animate-spin" />Loading connections…</p> : (
                 <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
@@ -180,7 +179,7 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
                                 <button type="button" disabled={busy !== ''} onClick={() => disconnect(account)} aria-label={`Disconnect ${account.account_name}`} className="rounded p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"><Trash2 size={12} /></button>
                             </div>
                         )) : <div className="rounded-lg border border-dashed border-stone-200 px-3 py-5 text-center text-[9px] text-slate-500">No social accounts connected.</div>}
-                        {!accounts.length && !providers.meta && !providers.tiktok && <p className="text-[8px] leading-4 text-slate-500">Set `META_APP_ID`, `META_APP_SECRET`, `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, and `AI_DASHBOARD_PUBLIC_URL` on the server. Meta authorization can return both Facebook Pages and linked Instagram professional accounts.</p>}
+                        {!accounts.length && !providers.meta && <p className="text-[8px] leading-4 text-slate-500">Set `META_APP_ID`, `META_APP_SECRET`, and `AI_DASHBOARD_PUBLIC_URL` on the server. Meta authorization can return both Facebook Pages and linked Instagram professional accounts.</p>}
                     </div>
 
                     <form onSubmit={publish} className="space-y-2 rounded-lg border border-stone-100 bg-white p-3">
