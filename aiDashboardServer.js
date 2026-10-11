@@ -405,6 +405,7 @@ const collectOrderTotals = (orders) => {
     const customerIds = new Set();
     const financials = {
         registryVolume: 0,
+        mcsShares: 0,
         eligibleSellerPayable: 0,
         dueForDisbursement: 0,
         settledFunds: 0,
@@ -418,6 +419,7 @@ const collectOrderTotals = (orders) => {
         const total = Number(order.total) || 0;
         const payable = Number(order.seller_payable_amount) || 0;
         financials.registryVolume += total;
+        financials.mcsShares += Number(order.commission_amount) || 0;
         if (disbursementStatuses.has(status)) {
             financials.eligibleSellerPayable += payable;
             if (order.mcs_payment_status === 'done') {
@@ -428,7 +430,6 @@ const collectOrderTotals = (orders) => {
         }
         if (order.customer_id) customerIds.add(String(order.customer_id));
     }
-    financials.mcsShares = financials.registryVolume - financials.eligibleSellerPayable;
     delete financials.eligibleSellerPayable;
     return {
         customerCount: customerIds.size,
@@ -448,7 +449,7 @@ const collectStoreOverview = async (supabase, lowStockThreshold, sellerId = null
             .limit(2000);
     let recentOrdersQuery = supabase
             .from('orders')
-            .select('id, total, status, date, customer_id, seller_payable_amount, mcs_payment_status')
+            .select('id, total, status, date, customer_id, commission_amount, seller_payable_amount, mcs_payment_status')
             .order('date', { ascending: false })
             .limit(1000);
     let productsQuery = supabase
