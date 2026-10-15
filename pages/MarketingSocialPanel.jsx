@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Camera, Check, ExternalLink, Link2, LoaderCircle, Send, Share2, ShieldCheck, Trash2 } from 'lucide-react';
+import { CalendarDays, Camera, Check, ExternalLink, Link2, LoaderCircle, Send, Share2, ShieldCheck, Trash2 } from 'lucide-react';
 import { aiDashboardService } from '../aiDashboardService';
 import { SectionCard } from './shared';
 
@@ -19,6 +19,22 @@ const imageFromProduct = (product) => {
 const productPageUrl = (product) => product?.slug
     ? `https://mithilachitrakalastore.com.np/product/${encodeURIComponent(product.slug)}`
     : '';
+const fallbackProductCaption = (product) => {
+    const name = String(product?.name || 'this beautiful piece').trim();
+    const hooks = [
+        'Give your space a story worth sharing. ✨',
+        'A little art can make a room feel a lot more like you. ✨',
+        'Looking for a detail that makes you stop and smile? Meet your new favorite. ✨',
+    ];
+    const hookIndex = [...name].reduce((total, character) => total + character.charCodeAt(0), 0) % hooks.length;
+    return `${hooks[hookIndex]}\n\nMeet ${name} — a beautiful find for anyone who loves art with character.\n\nBring home a little inspiration. Discover it today.\n\n#MithilaArt #ArtForYourHome #Nepal`;
+};
+const kathmanduDate = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kathmandu',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+}).format(new Date());
 // The API reports `publicUrlConfigured` beside `providers`; merge it so the Connect button reads one object.
 const normalizeProviders = (social = {}) => ({
     meta: Boolean(social.providers?.meta),
@@ -27,7 +43,7 @@ const normalizeProviders = (social = {}) => ({
     encryption: Boolean(social.providers?.encryption),
     publicUrlConfigured: Boolean(social.publicUrlConfigured ?? social.providers?.publicUrlConfigured),
 });
-const statusLabel = { draft: 'Draft', publishing: 'Publishing', processing: 'Processing on TikTok', published: 'Published', failed: 'Failed' };
+const statusLabel = { draft: 'Draft', scheduled: 'Scheduled', publishing: 'Publishing', processing: 'Processing on TikTok', published: 'Published', failed: 'Failed', cancelled: 'Cancelled' };
 
 export const MarketingSocialPanel = ({ token, products = [] }) => {
     const [accounts, setAccounts] = useState([]);
@@ -37,11 +53,16 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
     const [busy, setBusy] = useState('');
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
+    const [generatedSources, setGeneratedSources] = useState([]);
+    const [scheduleDate, setScheduleDate] = useState('');
+    const [scheduleTime, setScheduleTime] = useState('');
+    const [scheduleMode, setScheduleMode] = useState(false);
     const [accountId, setAccountId] = useState('');
     const [caption, setCaption] = useState('');
     const [productId, setProductId] = useState('');
     const [mediaUrl, setMediaUrl] = useState('');
     const [mediaType, setMediaType] = useState('image');
+    const [facebookPostType, setFacebookPostType] = useState('link');
     const [privacyLevel, setPrivacyLevel] = useState('');
 
     const refresh = async () => {
@@ -91,7 +112,10 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
         [products, productId]
     );
     const selectedProductUrl = productPageUrl(selectedProduct);
-    const publishCaption = [caption.trim(), selectedProductUrl].filter(Boolean).join('\n\n');
+    const facebookLinkPost = selectedAccount?.platform === 'facebook' && facebookPostType === 'link';
+    const publishCaption = facebookLinkPost
+        ? caption.trim()
+        : [caption.trim(), selectedProductUrl].filter(Boolean).join('\n\n');
     const connect = async (provider) => {
         setBusy(`connect-${provider}`);
         setError('');
@@ -100,6 +124,35 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
             window.location.assign(authorizationUrl);
         } catch (connectError) {
             setError(connectError.message || 'Unable to start social account connection.');
+            setBusy('');
+        }
+    };
+    const generateContent = async () => {
+        if (!selectedAccount || !selectedProduct) {
+            setError('Choose a social account and product before generating post content.');
+            return;
+        }
+        setBusy('generate');
+        setError('');
+        setGeneratedSources([]);
+        try {
+            const result = await aiDashboardService.generateMarketingSocialContent({
+                productId: String(selectedProduct.id),
+                platform: selectedAccount.platform,
+                goal: 'attract customers and encourage product page visits',
+                tone: 'warm, authentic, culturally respectful, and inviting',
+            }, token);
+            const generatedContent = typeof result.content === 'string' ? result.content.trim() : '';
+            if (!generatedContent) throw new Error('AI returned an empty caption.');
+            setCaption(generatedContent);
+            setGeneratedSources(result.sources || []);
+            setNotice(result.trendResearchAvailable
+                ? 'AI drafted post copy using current public web sources. Review every product claim before publishing.'
+                : 'AI drafted post copy, but current trend sources were unavailable. Review all claims before publishing.');
+        } catch (generationError) {
+            setCaption(fallbackProductCaption(selectedProduct));
+            setNotice('AI content generation is unavailable right now, so we drafted an editable caption for your selected product. Review it before publishing and try AI again later.');
+        } finally {
             setBusy('');
         }
     };
@@ -119,16 +172,30 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
     };
     const publish = async (event) => {
         event.preventDefault();
+        const shouldSchedule = event.nativeEvent.submitter?.value === 'schedule';
         if (!selectedAccount) return;
+        const scheduledAt = shouldSchedule && scheduleDate && scheduleTime
+            ? new Date(`${scheduleDate}T${scheduleTime}:00+05:45`).toISOString()
+            : '';
+        if (shouldSchedule && (!scheduledAt || new Date(scheduledAt).getTime() < Date.now() + 60_000)) {
+            setError('Choose a Nepal-time schedule at least one minute in the future.');
+            return;
+        }
+        if (facebookLinkPost && !selectedProductUrl) {
+            setError('Select a product before publishing a Facebook link post.');
+            return;
+        }
         if (publishCaption.length > 2200) {
             setError('Caption and product link must be 2,200 characters or fewer.');
             return;
         }
         const confirmed = window.confirm(
-            `Publish this post now to ${selectedAccount.account_name} on ${platformLabels[selectedAccount.platform]}?${selectedProductUrl ? `\n\nProduct link: ${selectedProductUrl}` : ''}\n\nThis will create a live post on that account.`
+            shouldSchedule
+                ? `Schedule this post for ${scheduleDate} at ${scheduleTime} Nepal time on ${selectedAccount.account_name}?${selectedProductUrl ? `\n\nProduct link: ${selectedProductUrl}` : ''}\n\nIt will publish automatically at the scheduled time.`
+                : `Publish this post now to ${selectedAccount.account_name} on ${platformLabels[selectedAccount.platform]}?${selectedProductUrl ? `\n\nProduct link: ${selectedProductUrl}` : ''}\n\nThis will create a live post on that account.`
         );
         if (!confirmed) return;
-        setBusy('publish');
+        setBusy(shouldSchedule ? 'schedule' : 'publish');
         setError('');
         setNotice('');
         try {
@@ -136,22 +203,46 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
                 platform: selectedAccount.platform,
                 accountId: selectedAccount.id,
                 caption: publishCaption,
-                mediaUrl: mediaType === 'text' ? '' : mediaUrl.trim(),
-                mediaType,
+                mediaUrl: facebookLinkPost || mediaType === 'text' ? '' : mediaUrl.trim(),
+                mediaType: selectedAccount.platform === 'facebook'
+                    ? facebookPostType === 'photo' ? 'image' : 'text'
+                    : mediaType,
                 privacyLevel,
+                productUrl: facebookLinkPost ? selectedProductUrl : '',
+                ...(shouldSchedule ? { scheduledAt } : {}),
             }, token);
             setPosts((current) => [post, ...current]);
             setCaption('');
             setProductId('');
             setMediaUrl('');
-            setNotice(post.status === 'processing'
+            setScheduleDate('');
+            setScheduleTime('');
+            setScheduleMode(false);
+            setNotice(post.status === 'scheduled'
+                ? `Post scheduled for ${new Date(post.scheduled_at).toLocaleString('en-NP', { timeZone: 'Asia/Kathmandu' })} Nepal time.`
+                : post.status === 'processing'
                 ? 'TikTok accepted the post. Check its status as processing completes.'
-                : selectedProductUrl
+                : facebookLinkPost
+                    ? 'Your Facebook post was published with a clickable product link preview.'
+                    : selectedProductUrl
                     ? 'Your post was published with the product link in its caption.'
                     : 'Your post was published successfully.');
         } catch (publishError) {
             setError(publishError.message || 'Unable to publish this post.');
             try { await refresh(); } catch { /* Keep the provider error visible. */ }
+        } finally {
+            setBusy('');
+        }
+    };
+    const cancelScheduledPost = async (postId) => {
+        setBusy(postId);
+        setError('');
+        try {
+            await aiDashboardService.cancelScheduledMarketingSocialPost(postId, token);
+            setPosts((current) => current.map((post) => post.id === postId ? { ...post, status: 'cancelled' } : post));
+            setNotice('Scheduled post cancelled.');
+        } catch (cancelError) {
+            setError(cancelError.message || 'Unable to cancel this scheduled post.');
         } finally {
             setBusy('');
         }
@@ -168,9 +259,11 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
             setBusy('');
         }
     };
+    const selectProduct = (event) => {
+        setProductId(event.target.value);
+    };
     const mediaFromProduct = (event) => {
         const product = products.find((item) => String(item.id) === event.target.value);
-        setProductId(event.target.value);
         if (product) {
             const url = imageFromProduct(product);
             if (url) {
@@ -219,20 +312,35 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
                     <form onSubmit={publish} className="space-y-2 rounded-lg border border-stone-100 bg-white p-3">
                         <div className="flex items-center justify-between gap-2"><h3 className="text-[10px] font-extrabold text-slate-800">Prepare a post</h3>{selectedAccount && <span className="text-[8px] text-slate-500">To {selectedAccount.account_name}</span>}</div>
                         <label className="block"><span className="mb-1 block text-[9px] font-bold text-slate-600">Account</span><select required disabled={!accounts.length} value={accountId} onChange={(event) => { const next = accounts.find((account) => account.id === event.target.value); setAccountId(event.target.value); if (next) { setPrivacyLevel(next.metadata?.privacyOptions?.[0] || ''); setMediaType(next.platform === 'tiktok' ? 'video' : 'image'); } }} className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[9px]">{!accounts.length && <option value="">Connect an account first</option>}{accounts.map((account) => <option key={account.id} value={account.id}>{platformLabels[account.platform]} · {account.account_name}</option>)}</select></label>
-                        <label className="block"><span className="mb-1 block text-[9px] font-bold text-slate-600">Caption</span><textarea required maxLength={2200} rows={3} value={caption} onChange={(event) => setCaption(event.target.value)} placeholder="Write your post caption…" className="w-full resize-y rounded-md border border-stone-200 px-2.5 py-2 text-[10px] outline-none focus:border-[#bd6740]" /></label>
-                        {products.some((product) => productPageUrl(product)) && <label className="block"><span className="mb-1 block text-[9px] font-bold text-slate-600">Add a product link</span><select value={productId} onChange={mediaFromProduct} className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[9px]"><option value="">No product selected</option>{products.filter((product) => productPageUrl(product)).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select>{selectedProductUrl && <span className="mt-1 block text-[8px] text-slate-500">Added to caption: <a href={selectedProductUrl} target="_blank" rel="noreferrer" className="text-[#a74427] underline">{selectedProductUrl}</a></span>}{selectedAccount?.platform === 'instagram' && selectedProductUrl && <span className="mt-1 block text-[8px] text-slate-500">Instagram captions don’t make links clickable. Customers can copy this URL or use your profile link.</span>}</label>}
-                        {selectedAccount?.platform !== 'facebook' || mediaType !== 'text' ? <div className="grid gap-2 sm:grid-cols-[1fr_1.4fr]">
+                        {selectedAccount?.platform === 'facebook' && <label className="block"><span className="mb-1 block text-[9px] font-bold text-slate-600">Facebook post type</span><select value={facebookPostType} onChange={(event) => setFacebookPostType(event.target.value)} className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[9px]"><option value="link">Link post (clickable product preview)</option><option value="photo">Photo post</option><option value="text">Text-only post</option></select></label>}
+                        <div>
+                            <div className="mb-1 flex items-center justify-between gap-2"><span className="text-[9px] font-bold text-slate-600">Caption</span><button type="button" disabled={!selectedProduct || !selectedAccount || busy !== ''} onClick={generateContent} className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-[8px] font-bold text-violet-800 disabled:opacity-50">{busy === 'generate' ? <LoaderCircle size={10} className="animate-spin" /> : <span>✦</span>}Generate with AI</button></div>
+                            <textarea required maxLength={2200} rows={5} value={caption} onChange={(event) => setCaption(event.target.value)} placeholder="Write a post caption or generate one with AI…" className="w-full resize-y rounded-md border border-stone-200 px-2.5 py-2 text-[10px] outline-none focus:border-[#bd6740]" />
+                            <p className="mt-1 text-[8px] leading-4 text-slate-500">AI uses current public web search for trend ideas when available. It does not analyze your account insights or guarantee views/sales; review every claim.</p>
+                            {generatedSources.length > 0 && <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[8px] text-slate-500"><span>Research:</span>{generatedSources.map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className="text-[#a74427] underline">{source.title}</a>)}</div>}
+                        </div>
+                        {products.some((product) => productPageUrl(product)) && <label className="block"><span className="mb-1 block text-[9px] font-bold text-slate-600">{facebookLinkPost ? 'Product to link' : 'Add a product link'}</span><select value={productId} onChange={selectProduct} required={facebookLinkPost} className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[9px]"><option value="">{facebookLinkPost ? 'Choose a product…' : 'No product selected'}</option>{products.filter((product) => productPageUrl(product)).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select>{selectedProductUrl && <span className="mt-1 block text-[8px] text-slate-500">{facebookLinkPost ? 'Facebook link preview: ' : 'Added to caption: '}<a href={selectedProductUrl} target="_blank" rel="noreferrer" className="text-[#a74427] underline">{selectedProductUrl}</a></span>}{selectedAccount?.platform === 'instagram' && selectedProductUrl && <span className="mt-1 block text-[8px] text-slate-500">Instagram captions don’t make links clickable. Customers can copy this URL or use your profile link.</span>}</label>}
+                        {(selectedAccount?.platform !== 'facebook' && mediaType !== 'text') || (selectedAccount?.platform === 'facebook' && facebookPostType === 'photo') ? <div className="grid gap-2 sm:grid-cols-[1fr_1.4fr]">
                             {products.some((product) => imageFromProduct(product)) && <label><span className="mb-1 block text-[9px] font-bold text-slate-600">Use a product image</span><select defaultValue="" onChange={mediaFromProduct} className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[9px]"><option value="">Choose product image…</option>{products.filter((product) => imageFromProduct(product)).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>}
                             <label className="block"><span className="mb-1 block text-[9px] font-bold text-slate-600">Public HTTPS media URL</span><input required type="url" value={mediaUrl} onChange={(event) => setMediaUrl(event.target.value)} placeholder="https://…" className="w-full rounded-md border border-stone-200 px-2.5 py-1.5 text-[9px] outline-none focus:border-[#bd6740]" /></label>
                         </div> : null}
+                        {facebookLinkPost && selectedProductUrl && <p className="rounded-md bg-blue-50 px-2.5 py-2 text-[8px] leading-4 text-blue-800">Facebook will attach this product page as a clickable link preview. Its image and title come from the public product page.</p>}
                         <div className="grid gap-2 sm:grid-cols-2">
-                            <label><span className="mb-1 block text-[9px] font-bold text-slate-600">Media type</span><select value={mediaType} onChange={(event) => setMediaType(event.target.value)} className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[9px]">{(selectedAccount?.platform === 'tiktok' ? [['image', 'Photo'], ['video', 'Video']] : selectedAccount?.platform === 'facebook' ? [['image', 'Image'], ['text', 'Text only']] : [['image', 'Image']]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                            {selectedAccount?.platform !== 'facebook' && <label><span className="mb-1 block text-[9px] font-bold text-slate-600">Media type</span><select value={mediaType} onChange={(event) => setMediaType(event.target.value)} className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[9px]">{(selectedAccount?.platform === 'tiktok' ? [['image', 'Photo'], ['video', 'Video']] : [['image', 'Image']]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
                             {selectedAccount?.platform === 'tiktok' && <label><span className="mb-1 block text-[9px] font-bold text-slate-600">TikTok privacy</span><select required value={privacyLevel} onChange={(event) => setPrivacyLevel(event.target.value)} className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[9px]"><option value="">Choose privacy…</option>{(selectedAccount.metadata?.privacyOptions || []).map((value) => <option key={value} value={value}>{value.replaceAll('_', ' ').toLowerCase()}</option>)}</select></label>}
                         </div>
-                        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-stone-100 pt-2">
-                            <p className="max-w-sm text-[8px] leading-4 text-slate-500"><ExternalLink size={10} className="mr-1 inline" />Media must be public so the provider can fetch it. TikTok may keep posts private until its app passes review.</p>
-                            <button type="submit" disabled={!selectedAccount || !caption.trim() || busy !== ''} className="inline-flex items-center gap-1.5 rounded-md bg-[#68201a] px-3 py-2 text-[9px] font-bold text-white hover:bg-[#4f1714] disabled:cursor-not-allowed disabled:opacity-50">{busy === 'publish' ? <LoaderCircle size={12} className="animate-spin" /> : <Send size={12} />}Publish now</button>
-                        </div>
+                            {scheduleMode && <div className="grid gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 sm:grid-cols-2">
+                                <label><span className="mb-1 block text-[9px] font-bold text-slate-700">Schedule date (Nepal time)</span><input required type="date" min={kathmanduDate} value={scheduleDate} onChange={(event) => setScheduleDate(event.target.value)} className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[9px]" /></label>
+                                <label><span className="mb-1 block text-[9px] font-bold text-slate-700">Time (Asia/Kathmandu)</span><input required type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[9px]" /></label>
+                                <p className="text-[8px] leading-4 text-amber-900 sm:col-span-2">This server must remain online at the scheduled time. Posts are queued only after you confirm, and you can cancel before publishing starts.</p>
+                            </div>}
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-stone-100 pt-2">
+                                <p className="max-w-sm text-[8px] leading-4 text-slate-500"><ExternalLink size={10} className="mr-1 inline" />Media must be public so the provider can fetch it. TikTok may keep posts private until its app passes review.</p>
+                                <div className="flex gap-1.5">
+                                    <button type="submit" value="publish" disabled={!selectedAccount || !caption.trim() || (facebookLinkPost && !selectedProductUrl) || busy !== ''} className="inline-flex items-center gap-1.5 rounded-md border border-stone-200 bg-white px-3 py-2 text-[9px] font-bold text-slate-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50">{busy === 'publish' ? <LoaderCircle size={12} className="animate-spin" /> : <Send size={12} />}Publish now</button>
+                                    <button type={scheduleMode ? 'submit' : 'button'} value={scheduleMode ? 'schedule' : undefined} onClick={() => { if (!scheduleMode) setScheduleMode(true); }} disabled={!selectedAccount || !caption.trim() || (facebookLinkPost && !selectedProductUrl) || busy !== ''} className="inline-flex items-center gap-1.5 rounded-md bg-[#68201a] px-3 py-2 text-[9px] font-bold text-white hover:bg-[#4f1714] disabled:cursor-not-allowed disabled:opacity-50">{busy === 'schedule' ? <LoaderCircle size={12} className="animate-spin" /> : <CalendarDays size={12} />}{scheduleMode ? 'Confirm schedule' : 'Schedule post'}</button>
+                                </div>
+                            </div>
                     </form>
                 </div>
             )}
@@ -242,7 +350,7 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
                 {posts.length ? <div className="max-h-56 space-y-1.5 overflow-y-auto">{posts.slice(0, 30).map((post) => (
                     <div key={post.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-stone-100 bg-white px-2.5 py-2">
                         <div className="min-w-0"><p className="truncate text-[9px] font-semibold text-slate-700">{post.caption}</p><p className="mt-0.5 text-[8px] capitalize text-slate-500">{platformLabels[post.platform]} · {new Date(post.created_at).toLocaleString()}</p>{post.error_message && <p className="mt-1 text-[8px] text-rose-700">{post.error_message}</p>}</div>
-                        <div className="flex shrink-0 items-center gap-2"><span className={`rounded-full px-2 py-1 text-[8px] font-bold ${post.status === 'published' ? 'bg-emerald-50 text-emerald-700' : post.status === 'failed' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-800'}`}>{statusLabel[post.status] || post.status}</span>{post.status === 'processing' && post.platform === 'tiktok' && <button type="button" disabled={busy !== ''} onClick={() => checkStatus(post.id)} className="text-[8px] font-bold text-[#a74427] hover:underline disabled:opacity-50">Check</button>}</div>
+                        <div className="flex shrink-0 items-center gap-2"><span className={`rounded-full px-2 py-1 text-[8px] font-bold ${post.status === 'published' ? 'bg-emerald-50 text-emerald-700' : post.status === 'failed' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-800'}`}>{statusLabel[post.status] || post.status}</span>{post.status === 'scheduled' && post.scheduled_at && <span className="text-[8px] text-slate-500">{new Date(post.scheduled_at).toLocaleString('en-NP', { timeZone: 'Asia/Kathmandu' })} NPT</span>}{post.status === 'scheduled' && <button type="button" disabled={busy !== ''} onClick={() => cancelScheduledPost(post.id)} className="text-[8px] font-bold text-rose-700 hover:underline disabled:opacity-50">Cancel</button>}{post.status === 'processing' && post.platform === 'tiktok' && <button type="button" disabled={busy !== ''} onClick={() => checkStatus(post.id)} className="text-[8px] font-bold text-[#a74427] hover:underline disabled:opacity-50">Check</button>}</div>
                     </div>
                 ))}</div> : <p className="text-[9px] text-slate-500">Published posts and provider failures will appear here.</p>}
             </div>

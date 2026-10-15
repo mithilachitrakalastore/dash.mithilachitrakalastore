@@ -144,8 +144,53 @@ create table if not exists public.marketing_social_posts (
     updated_at timestamptz not null default now()
 );
 
+alter table public.marketing_social_posts
+    add column if not exists scheduled_at timestamptz,
+    add column if not exists schedule_claimed_at timestamptz,
+    add column if not exists product_url text;
+
+alter table public.marketing_social_posts
+    drop constraint if exists marketing_social_posts_status_check;
+alter table public.marketing_social_posts
+    add constraint marketing_social_posts_status_check
+    check (status in ('draft', 'scheduled', 'publishing', 'processing', 'published', 'failed', 'cancelled'));
+
 create index if not exists marketing_social_posts_account_created_idx
     on public.marketing_social_posts (account_id, created_at desc);
+create index if not exists marketing_social_posts_due_schedule_idx
+    on public.marketing_social_posts (scheduled_at)
+    where status = 'scheduled';
+
+create or replace function public.claim_due_marketing_social_posts(batch_size integer default 5)
+returns setof public.marketing_social_posts
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+    return query
+    with due as (
+        select id
+        from public.marketing_social_posts
+        where status = 'scheduled'
+          and scheduled_at <= now()
+          and (schedule_claimed_at is null or schedule_claimed_at < now() - interval '10 minutes')
+        order by scheduled_at, created_at
+        for update skip locked
+        limit greatest(1, least(batch_size, 10))
+    )
+    update public.marketing_social_posts as posts
+    set status = 'publishing',
+        schedule_claimed_at = now(),
+        updated_at = now()
+    from due
+    where posts.id = due.id
+    returning posts.*;
+end;
+$$;
+
+revoke all on function public.claim_due_marketing_social_posts(integer) from public, anon, authenticated;
+grant execute on function public.claim_due_marketing_social_posts(integer) to service_role;
 
 alter table public.marketing_social_accounts enable row level security;
 alter table public.marketing_social_posts enable row level security;

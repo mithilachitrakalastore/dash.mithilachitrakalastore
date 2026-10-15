@@ -37,6 +37,10 @@ export const aiDashboardService = {
     getStoreManagement: (token) => request('/admin/ai/store-management', token),
     getMarketingCampaigns: (token) => request('/admin/ai/marketing/campaigns', token),
     getMarketingSocial: (token) => request('/admin/ai/marketing/social', token),
+    generateMarketingSocialContent: (payload, token) => request('/admin/ai/marketing/social/generate-content', token, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    }),
     connectMarketingSocial: (platform, token) => request(`/admin/ai/marketing/social/connect/${encodeURIComponent(platform)}`, token, {
         method: 'POST',
         body: JSON.stringify({}),
@@ -51,6 +55,10 @@ export const aiDashboardService = {
         body: JSON.stringify(payload),
     }),
     refreshMarketingSocialPost: (postId, token) => request(`/admin/ai/marketing/social/posts/${encodeURIComponent(postId)}/status`, token, {
+        method: 'POST',
+        body: JSON.stringify({}),
+    }),
+    cancelScheduledMarketingSocialPost: (postId, token) => request(`/admin/ai/marketing/social/posts/${encodeURIComponent(postId)}/cancel`, token, {
         method: 'POST',
         body: JSON.stringify({}),
     }),
