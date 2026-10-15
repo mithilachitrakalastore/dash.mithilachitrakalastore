@@ -41,7 +41,15 @@ const decryptSocialToken = (value, key) => {
 
 const parseSocialResponse = async (response, provider) => {
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(`${provider} returned HTTP ${response.status}.`);
+    if (!response.ok) {
+        const detail = data.error_message ||
+            (typeof data.error === 'string' ? data.error : data.error?.message) ||
+            data.message;
+        const safeDetail = typeof detail === 'string'
+            ? detail.replace(/(access_token|client_secret|code)=([^&\s]+)/gi, '$1=[redacted]').slice(0, 500)
+            : '';
+        throw new Error(`${provider} returned HTTP ${response.status}${safeDetail ? `: ${safeDetail}` : '.'}`);
+    }
     const providerError = data.error && typeof data.error === 'object' && data.error.code === 'ok'
         ? null
         : data.error;
