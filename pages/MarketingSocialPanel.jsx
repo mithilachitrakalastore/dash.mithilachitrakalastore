@@ -16,6 +16,13 @@ const imageFromProduct = (product) => {
         : typeof product.images === 'string' ? product.images.split(',') : [];
     return [image, ...images].find((value) => typeof value === 'string' && value.startsWith('https://')) || '';
 };
+// The API reports `publicUrlConfigured` beside `providers`; merge it so the Connect button reads one object.
+const normalizeProviders = (social = {}) => ({
+    meta: Boolean(social.providers?.meta),
+    tiktok: Boolean(social.providers?.tiktok),
+    encryption: Boolean(social.providers?.encryption),
+    publicUrlConfigured: Boolean(social.publicUrlConfigured ?? social.providers?.publicUrlConfigured),
+});
 const statusLabel = { draft: 'Draft', publishing: 'Publishing', processing: 'Processing on TikTok', published: 'Published', failed: 'Failed' };
 
 export const MarketingSocialPanel = ({ token, products = [] }) => {
@@ -38,7 +45,7 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
             aiDashboardService.getMarketingSocialPosts(token),
         ]);
         setAccounts(social.accounts || []);
-        setProviders(social.providers || {});
+        setProviders(normalizeProviders(social));
         setPosts(postHistory.posts || []);
         setAccountId((current) => social.accounts?.some((account) => account.id === current)
             ? current
@@ -50,7 +57,7 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
             .then(([social, postHistory]) => {
                 if (!current) return;
                 setAccounts(social.accounts || []);
-                setProviders(social.providers || {});
+                setProviders(normalizeProviders(social));
                 setPosts(postHistory.posts || []);
                 setAccountId(social.accounts?.[0]?.id || '');
             })
@@ -67,6 +74,11 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
         return () => { current = false; };
     }, [token]);
 
+    const missingSetup = useMemo(() => [
+        !providers.meta && 'META_APP_ID and META_APP_SECRET',
+        !providers.publicUrlConfigured && 'AI_DASHBOARD_PUBLIC_URL',
+        !providers.encryption && 'SOCIAL_TOKEN_ENCRYPTION_KEY (64 hex characters or 32-byte base64)',
+    ].filter(Boolean), [providers]);
     const selectedAccount = useMemo(() => accounts.find((account) => account.id === accountId), [accounts, accountId]);
     const connect = async (provider) => {
         setBusy(`connect-${provider}`);
@@ -163,7 +175,7 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
 
             {(error || notice) && <div role={error ? 'alert' : 'status'} className={`mb-3 rounded-md border px-3 py-2 text-[10px] ${error ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>{error || notice}</div>}
 
-            {(!providers.meta || !providers.encryption || !providers.publicUrlConfigured) && <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[9px] leading-4 text-amber-900"><ShieldCheck size={13} className="mt-0.5 shrink-0" /><span>Meta connections need server-only app credentials, `AI_DASHBOARD_PUBLIC_URL`, and a 32-byte social-token encryption key. Platform review/permissions may also be required. Never put these secrets in frontend `VITE_*` settings.</span></div>}
+            {missingSetup.length > 0 && <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[9px] leading-4 text-amber-900"><ShieldCheck size={13} className="mt-0.5 shrink-0" /><span>Meta connections still need these server settings: {missingSetup.join(', ')}. Add them to the server environment (never `VITE_*` settings) and restart the service. Meta app review or tester roles may also be required.</span></div>}
 
             {loading ? <p className="py-6 text-center text-[10px] text-slate-500"><LoaderCircle size={13} className="mr-1 inline animate-spin" />Loading connections…</p> : (
                 <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">

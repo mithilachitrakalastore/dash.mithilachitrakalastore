@@ -993,6 +993,7 @@ export const registerAIDashboardRoutes = ({
                     meta: Boolean(process.env.META_APP_ID && process.env.META_APP_SECRET),
                     tiktok: Boolean(process.env.TIKTOK_CLIENT_KEY && process.env.TIKTOK_CLIENT_SECRET),
                     encryption: Boolean(getSocialTokenEncryptionKey()),
+                    publicUrlConfigured: Boolean(socialFrontendOrigin),
                 },
                 publicUrlConfigured: Boolean(socialFrontendOrigin),
             });
