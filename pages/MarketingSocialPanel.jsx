@@ -100,6 +100,28 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
         return () => { current = false; };
     }, [token]);
 
+    useEffect(() => {
+        if (!posts.some((post) => post.status === 'scheduled' || post.status === 'publishing')) return undefined;
+        let current = true;
+        let refreshing = false;
+        const timer = window.setInterval(async () => {
+            if (refreshing) return;
+            refreshing = true;
+            try {
+                const { posts: latestPosts } = await aiDashboardService.getMarketingSocialPosts(token);
+                if (current) setPosts(latestPosts || []);
+            } catch (refreshError) {
+                if (current) setError(refreshError.message || 'Unable to refresh scheduled post status.');
+            } finally {
+                refreshing = false;
+            }
+        }, 30_000);
+        return () => {
+            current = false;
+            window.clearInterval(timer);
+        };
+    }, [token, posts.some((post) => post.status === 'scheduled' || post.status === 'publishing')]);
+
     const missingSetup = useMemo(() => [
         !providers.meta && 'META_APP_ID and META_APP_SECRET',
         !providers.publicUrlConfigured && 'AI_DASHBOARD_PUBLIC_URL',
