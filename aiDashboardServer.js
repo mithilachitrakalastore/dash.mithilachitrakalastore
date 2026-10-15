@@ -892,6 +892,38 @@ export const registerAIDashboardRoutes = ({
         }
         return new URL(`/api/admin/ai/marketing/social/callback/${provider}`, base).toString();
     };
+    const verifyInstagramSignedRequest = (signedRequest) => {
+        if (!process.env.INSTA_APP_SECRET || typeof signedRequest !== 'string') return null;
+        const [encodedSignature, encodedPayload, extra] = signedRequest.split('.');
+        if (!encodedSignature || !encodedPayload || extra !== undefined) return null;
+        const decodeBase64Url = (value) => Buffer.from(value.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+        const expectedSignature = crypto.createHmac('sha256', process.env.INSTA_APP_SECRET).update(encodedPayload).digest();
+        let providedSignature;
+        let payload;
+        try {
+            providedSignature = decodeBase64Url(encodedSignature);
+            payload = JSON.parse(decodeBase64Url(encodedPayload).toString('utf8'));
+        } catch {
+            return null;
+        }
+        if (providedSignature.length !== expectedSignature.length ||
+            !crypto.timingSafeEqual(providedSignature, expectedSignature) ||
+            String(payload.algorithm || '').toUpperCase() !== 'HMAC-SHA256' ||
+            !/^\d{1,32}$/.test(String(payload.user_id || ''))) return null;
+        return String(payload.user_id);
+    };
+    const createDeletionConfirmationCode = () => {
+        const payload = crypto.randomBytes(32).toString('base64url');
+        const signature = crypto.createHmac('sha256', tokenSecret).update(payload).digest('base64url');
+        return `${payload}.${signature}`;
+    };
+    const isValidDeletionConfirmationCode = (confirmationCode) => {
+        const [payload, signature, extra] = String(confirmationCode || '').split('.');
+        if (!payload || !signature || extra !== undefined) return false;
+        const expected = crypto.createHmac('sha256', tokenSecret).update(payload).digest();
+        const provided = Buffer.from(signature, 'base64url');
+        return provided.length === expected.length && crypto.timingSafeEqual(provided, expected);
+    };
     const createSocialOAuthState = (adminId, provider) => {
         const payload = Buffer.from(JSON.stringify({
             sub: String(adminId),
@@ -998,6 +1030,55 @@ export const registerAIDashboardRoutes = ({
         accessToken = tokenData.access_token;
         return accessToken;
     };
+
+    app.post(
+        '/api/admin/ai/marketing/social/data-deletion/instagram',
+        express.urlencoded({ extended: false, limit: '10kb' }),
+        async (req, res) => {
+            const instagramUserId = verifyInstagramSignedRequest(req.body?.signed_request);
+            if (!instagramUserId) return res.status(400).json({ error: 'Invalid Instagram data deletion request signature.' });
+            if (!socialApiOrigin) return res.status(500).json({ error: 'Instagram data deletion callback URL is not configured.' });
+            try {
+                const { data: accounts, error: selectError } = await supabase
+                    .from('marketing_social_accounts')
+                    .select('id, external_account_id, metadata')
+                    .eq('platform', 'instagram')
+                    .contains('metadata', { authMethod: 'instagram_login' })
+                    .limit(1000);
+                if (selectError) throw new Error(`Unable to locate Instagram data for deletion: ${selectError.message}`);
+                const matchingIds = (accounts || [])
+                    .filter((account) => account.external_account_id === instagramUserId ||
+                        account.metadata?.instagramAppScopedUserId === instagramUserId)
+                    .map((account) => account.id);
+                if (matchingIds.length) {
+                    const { error: deleteError } = await supabase
+                        .from('marketing_social_accounts')
+                        .delete()
+                        .in('id', matchingIds);
+                    if (deleteError) throw new Error(`Unable to delete Instagram account data: ${deleteError.message}`);
+                }
+                const confirmationCode = createDeletionConfirmationCode();
+                const statusUrl = new URL(
+                    `/api/admin/ai/marketing/social/data-deletion/status/${encodeURIComponent(confirmationCode)}`,
+                    socialApiOrigin
+                ).toString();
+                return res.json({ url: statusUrl, confirmation_code: confirmationCode });
+            } catch (error) {
+                console.error('AI dashboard Instagram data deletion failed:', error);
+                return res.status(500).json({ error: 'Unable to complete Instagram data deletion request.' });
+            }
+        }
+    );
+
+    app.get('/api/admin/ai/marketing/social/data-deletion/status/:confirmationCode', (req, res) => {
+        if (!isValidDeletionConfirmationCode(req.params.confirmationCode)) {
+            return res.status(404).json({ error: 'Data deletion request not found.' });
+        }
+        return res.json({
+            confirmation_code: req.params.confirmationCode,
+            status: 'completed',
+        });
+    });
 
     app.get('/api/admin/ai/marketing/social', async (req, res) => {
         try {
@@ -1184,7 +1265,10 @@ export const registerAIDashboardRoutes = ({
                     accessToken: longToken.access_token,
                     expiresIn: longToken.expires_in,
                     scopes: String(shortToken.permissions || 'instagram_business_basic,instagram_business_content_publish').split(',').filter(Boolean),
-                    metadata: { authMethod: 'instagram_login' },
+                    metadata: {
+                        authMethod: 'instagram_login',
+                        instagramAppScopedUserId: String(shortToken.user_id || ''),
+                    },
                     adminId: stateAdminId,
                 });
             } else {
