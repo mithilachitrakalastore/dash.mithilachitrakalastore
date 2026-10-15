@@ -1143,16 +1143,15 @@ export const registerAIDashboardRoutes = ({
                     }
                 }
             } else if (provider === 'instagram') {
+                const instagramTokenForm = new FormData();
+                instagramTokenForm.set('client_id', process.env.INSTA_APP_ID || '');
+                instagramTokenForm.set('client_secret', process.env.INSTA_APP_SECRET || '');
+                instagramTokenForm.set('grant_type', 'authorization_code');
+                instagramTokenForm.set('redirect_uri', callbackUrl);
+                instagramTokenForm.set('code', req.query.code);
                 const tokenResponse = await parseSocialResponse(await fetch('https://api.instagram.com/oauth/access_token', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: new URLSearchParams({
-                        client_id: process.env.INSTA_APP_ID || '',
-                        client_secret: process.env.INSTA_APP_SECRET || '',
-                        grant_type: 'authorization_code',
-                        redirect_uri: callbackUrl,
-                        code: req.query.code,
-                    }),
+                    body: instagramTokenForm,
                 }), 'Instagram OAuth');
                 const shortToken = Array.isArray(tokenResponse.data) ? tokenResponse.data[0] : tokenResponse.data || tokenResponse;
                 if (!shortToken?.access_token) throw new Error('Instagram did not return an authorization token.');
