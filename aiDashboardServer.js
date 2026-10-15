@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import express from 'express';
 import { Resend } from 'resend';
 
 const MAX_PROMPT_LENGTH = 1500;
