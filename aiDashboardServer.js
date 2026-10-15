@@ -950,7 +950,22 @@ export const registerAIDashboardRoutes = ({
         if (!encryptionKey) throw new Error('Social account token encryption is not configured.');
         let accessToken = decryptSocialToken(account.access_token_ciphertext, encryptionKey);
         const expiresAt = account.token_expires_at ? new Date(account.token_expires_at).getTime() : 0;
-        if (account.platform !== 'tiktok' || !expiresAt || expiresAt > Date.now() + 5 * 60_000) return accessToken;
+        if (!expiresAt || expiresAt > Date.now() + 5 * 60_000) return accessToken;
+        if (account.platform === 'instagram' && account.metadata?.authMethod === 'instagram_login') {
+            const refreshUrl = new URL('https://graph.instagram.com/refresh_access_token');
+            refreshUrl.searchParams.set('grant_type', 'ig_refresh_token');
+            refreshUrl.searchParams.set('access_token', accessToken);
+            const refreshed = await parseSocialResponse(await fetch(refreshUrl), 'Instagram token refresh');
+            if (!refreshed.access_token) throw new Error('Instagram did not return a refreshed access token. Reconnect the account.');
+            const { error } = await supabase.from('marketing_social_accounts').update({
+                access_token_ciphertext: encryptSocialToken(refreshed.access_token, encryptionKey),
+                token_expires_at: Number(refreshed.expires_in) > 0 ? new Date(Date.now() + Number(refreshed.expires_in) * 1000).toISOString() : null,
+                updated_at: new Date().toISOString(),
+            }).eq('id', account.id);
+            if (error) throw new Error(`Instagram token refreshed but could not be saved: ${error.message}`);
+            return refreshed.access_token;
+        }
+        if (account.platform !== 'tiktok' || !expiresAt) return accessToken;
         if (!account.refresh_token_ciphertext) throw new Error('TikTok access expired. Disconnect and reconnect the TikTok account.');
         const refreshToken = decryptSocialToken(account.refresh_token_ciphertext, encryptionKey);
         const refreshed = await parseSocialResponse(await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
@@ -991,6 +1006,7 @@ export const registerAIDashboardRoutes = ({
                 accounts: data || [],
                 providers: {
                     meta: Boolean(process.env.META_APP_ID && process.env.META_APP_SECRET),
+                    instagram: Boolean(process.env.INSTA_APP_ID && process.env.INSTA_APP_SECRET),
                     tiktok: Boolean(process.env.TIKTOK_CLIENT_KEY && process.env.TIKTOK_CLIENT_SECRET),
                     encryption: Boolean(getSocialTokenEncryptionKey()),
                     publicUrlConfigured: Boolean(socialFrontendOrigin),
@@ -1010,27 +1026,39 @@ export const registerAIDashboardRoutes = ({
             if (!checkRateLimit(authorization.admin.id)) return res.status(429).json({ error: 'Too many marketing requests. Wait a minute and try again.' });
             const { provider } = req.params;
             if (provider === 'tiktok') return res.status(410).json({ error: 'TikTok account connections are temporarily unavailable.' });
-            if (provider !== 'meta') return res.status(400).json({ error: 'Choose Meta to connect.' });
+            if (!['meta', 'instagram'].includes(provider)) return res.status(400).json({ error: 'Choose Facebook or Instagram to connect.' });
             if (!getSocialTokenEncryptionKey()) {
                 return res.status(503).json({ error: 'Configure SOCIAL_TOKEN_ENCRYPTION_KEY on the dashboard server before connecting social accounts.' });
+            }
+            if (provider === 'meta' && (!process.env.META_APP_ID || !process.env.META_APP_SECRET)) {
+                throw new Error('Configure META_APP_ID and META_APP_SECRET on the dashboard server.');
+            }
+            if (provider === 'instagram' && (!process.env.INSTA_APP_ID || !process.env.INSTA_APP_SECRET)) {
+                throw new Error('Configure INSTA_APP_ID and INSTA_APP_SECRET on the dashboard server.');
             }
             const callbackUrl = getSocialCallbackUrl(provider);
             const state = createSocialOAuthState(authorization.admin.id, provider);
             const authorizationUrl = provider === 'meta'
                 ? (() => {
-                    if (!process.env.META_APP_ID || !process.env.META_APP_SECRET) throw new Error('Configure META_APP_ID and META_APP_SECRET on the dashboard server.');
                     const url = new URL(`https://www.facebook.com/${metaGraphVersion}/dialog/oauth`);
                     url.searchParams.set('client_id', process.env.META_APP_ID);
                     url.searchParams.set('redirect_uri', callbackUrl);
                     url.searchParams.set('response_type', 'code');
                     url.searchParams.set('state', state);
-                    url.searchParams.set('scope', [
-                        'pages_show_list', 'pages_read_engagement', 'pages_manage_posts',
-                        'instagram_basic', 'instagram_content_publish',
-                    ].join(','));
+                    url.searchParams.set('scope', 'pages_show_list,pages_read_engagement,pages_manage_posts');
                     return url.toString();
                 })()
-                : (() => {
+                : provider === 'instagram'
+                    ? (() => {
+                        const url = new URL('https://www.instagram.com/oauth/authorize');
+                        url.searchParams.set('client_id', process.env.INSTA_APP_ID);
+                        url.searchParams.set('redirect_uri', callbackUrl);
+                        url.searchParams.set('response_type', 'code');
+                        url.searchParams.set('scope', 'instagram_business_basic,instagram_business_content_publish');
+                        url.searchParams.set('state', state);
+                        return url.toString();
+                    })()
+                    : (() => {
                     if (!process.env.TIKTOK_CLIENT_KEY || !process.env.TIKTOK_CLIENT_SECRET) throw new Error('Configure TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET on the dashboard server.');
                     const url = new URL('https://www.tiktok.com/v2/auth/authorize/');
                     url.searchParams.set('client_key', process.env.TIKTOK_CLIENT_KEY);
@@ -1055,7 +1083,7 @@ export const registerAIDashboardRoutes = ({
             redirectUrl.hash = `/marketing-seo?social=${encodeURIComponent(result)}`;
             return res.redirect(302, redirectUrl.toString());
         };
-        if (!stateAdminId || !['meta', 'tiktok'].includes(provider)) return redirectToDashboard('invalid_state');
+        if (!stateAdminId || !['meta', 'instagram', 'tiktok'].includes(provider)) return redirectToDashboard('invalid_state');
         if (req.query.error || typeof req.query.code !== 'string' || req.query.code.length > 4096) {
             return redirectToDashboard('authorization_cancelled');
         }
@@ -1085,7 +1113,7 @@ export const registerAIDashboardRoutes = ({
                 });
                 const longToken = await parseSocialResponse(await fetch(`https://graph.facebook.com/${metaGraphVersion}/oauth/access_token?${longTokenQuery}`), 'Meta token exchange');
                 const pageUrl = new URL(`https://graph.facebook.com/${metaGraphVersion}/me/accounts`);
-                pageUrl.searchParams.set('fields', 'id,name,access_token,instagram_business_account{id,username}');
+                pageUrl.searchParams.set('fields', 'id,name,access_token');
                 pageUrl.searchParams.set('access_token', longToken.access_token);
                 const pages = await parseSocialResponse(await fetch(pageUrl), 'Meta Pages');
                 if (!Array.isArray(pages.data) || !pages.data.length) throw new Error('No Facebook Pages were granted to this Meta account.');
@@ -1109,11 +1137,49 @@ export const registerAIDashboardRoutes = ({
                             accessToken: page.access_token,
                             expiresIn: null,
                             scopes: String(shortToken.granted_scopes || '').split(',').filter(Boolean),
-                            metadata: { pageId: page.id, pageName: page.name || '' },
+                            metadata: { pageId: page.id, pageName: page.name || '', authMethod: 'facebook_login' },
                             adminId: stateAdminId,
                         });
                     }
                 }
+            } else if (provider === 'instagram') {
+                const tokenResponse = await parseSocialResponse(await fetch('https://api.instagram.com/oauth/access_token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        client_id: process.env.INSTA_APP_ID || '',
+                        client_secret: process.env.INSTA_APP_SECRET || '',
+                        grant_type: 'authorization_code',
+                        redirect_uri: callbackUrl,
+                        code: req.query.code,
+                    }),
+                }), 'Instagram OAuth');
+                const shortToken = Array.isArray(tokenResponse.data) ? tokenResponse.data[0] : tokenResponse.data || tokenResponse;
+                if (!shortToken?.access_token) throw new Error('Instagram did not return an authorization token.');
+                const longTokenUrl = new URL('https://graph.instagram.com/access_token');
+                longTokenUrl.searchParams.set('grant_type', 'ig_exchange_token');
+                longTokenUrl.searchParams.set('client_secret', process.env.INSTA_APP_SECRET || '');
+                longTokenUrl.searchParams.set('access_token', shortToken.access_token);
+                const longTokenResponse = await parseSocialResponse(await fetch(longTokenUrl), 'Instagram long-lived token exchange');
+                const longToken = longTokenResponse.data || longTokenResponse;
+                if (!longToken.access_token) throw new Error('Instagram did not return a long-lived access token.');
+                const profileUrl = new URL(`https://graph.instagram.com/${metaGraphVersion}/me`);
+                profileUrl.searchParams.set('fields', 'user_id,username');
+                profileUrl.searchParams.set('access_token', longToken.access_token);
+                const profileResponse = await parseSocialResponse(await fetch(profileUrl), 'Instagram profile');
+                const profile = profileResponse.data || profileResponse;
+                const instagramUserId = profile.user_id || profile.id || shortToken.user_id;
+                if (!instagramUserId) throw new Error('Instagram did not return a professional account ID.');
+                await saveSocialAccount({
+                    platform: 'instagram',
+                    externalAccountId: instagramUserId,
+                    accountName: profile.username || 'Instagram professional account',
+                    accessToken: longToken.access_token,
+                    expiresIn: longToken.expires_in,
+                    scopes: String(shortToken.permissions || 'instagram_business_basic,instagram_business_content_publish').split(',').filter(Boolean),
+                    metadata: { authMethod: 'instagram_login' },
+                    adminId: stateAdminId,
+                });
             } else {
                 if (!process.env.TIKTOK_CLIENT_KEY || !process.env.TIKTOK_CLIENT_SECRET) throw new Error('TikTok OAuth is not configured.');
                 const tokenResponse = await parseSocialResponse(await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
@@ -1254,7 +1320,10 @@ export const registerAIDashboardRoutes = ({
             let status = 'published';
 
             if (platform === 'instagram') {
-                const graphUrl = `https://graph.facebook.com/${metaGraphVersion}`;
+                const graphHost = account.metadata?.authMethod === 'instagram_login'
+                    ? 'https://graph.instagram.com'
+                    : 'https://graph.facebook.com';
+                const graphUrl = `${graphHost}/${metaGraphVersion}`;
                 const container = await parseSocialResponse(await fetch(`${graphUrl}/${encodeURIComponent(account.external_account_id)}/media`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

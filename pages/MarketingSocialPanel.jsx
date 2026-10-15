@@ -19,6 +19,7 @@ const imageFromProduct = (product) => {
 // The API reports `publicUrlConfigured` beside `providers`; merge it so the Connect button reads one object.
 const normalizeProviders = (social = {}) => ({
     meta: Boolean(social.providers?.meta),
+    instagram: Boolean(social.providers?.instagram),
     tiktok: Boolean(social.providers?.tiktok),
     encryption: Boolean(social.providers?.encryption),
     publicUrlConfigured: Boolean(social.publicUrlConfigured ?? social.providers?.publicUrlConfigured),
@@ -28,7 +29,7 @@ const statusLabel = { draft: 'Draft', publishing: 'Publishing', processing: 'Pro
 export const MarketingSocialPanel = ({ token, products = [] }) => {
     const [accounts, setAccounts] = useState([]);
     const [posts, setPosts] = useState([]);
-    const [providers, setProviders] = useState({ meta: false, encryption: false, publicUrlConfigured: false });
+    const [providers, setProviders] = useState({ meta: false, instagram: false, encryption: false, publicUrlConfigured: false });
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState('');
     const [error, setError] = useState('');
@@ -79,6 +80,7 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
         !providers.publicUrlConfigured && 'AI_DASHBOARD_PUBLIC_URL',
         !providers.encryption && 'SOCIAL_TOKEN_ENCRYPTION_KEY (64 hex characters or 32-byte base64)',
     ].filter(Boolean), [providers]);
+    const instagramSetupMissing = !providers.instagram;
     const selectedAccount = useMemo(() => accounts.find((account) => account.id === accountId), [accounts, accountId]);
     const connect = async (provider) => {
         setBusy(`connect-${provider}`);
@@ -169,13 +171,15 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
                     <p className="mt-1 max-w-3xl text-[9px] leading-4 text-slate-500">Connect accounts through the platform authorization screen. Review the post and confirm before anything is published live.</p>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                    <button type="button" disabled={!providers.meta || !providers.encryption || !providers.publicUrlConfigured || busy !== ''} onClick={() => connect('meta')} className="inline-flex items-center gap-1.5 rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-[9px] font-bold text-slate-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-45"><Share2 size={12} />Connect Meta</button>
+                    <button type="button" disabled={!providers.meta || !providers.encryption || !providers.publicUrlConfigured || busy !== ''} onClick={() => connect('meta')} className="inline-flex items-center gap-1.5 rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-[9px] font-bold text-slate-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-45"><Share2 size={12} />Connect Facebook Page</button>
+                    <button type="button" disabled={!providers.instagram || !providers.encryption || !providers.publicUrlConfigured || busy !== ''} onClick={() => connect('instagram')} className="inline-flex items-center gap-1.5 rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-[9px] font-bold text-slate-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-45"><Camera size={12} />Connect Instagram</button>
                 </div>
             </div>
 
             {(error || notice) && <div role={error ? 'alert' : 'status'} className={`mb-3 rounded-md border px-3 py-2 text-[10px] ${error ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>{error || notice}</div>}
 
             {missingSetup.length > 0 && <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[9px] leading-4 text-amber-900"><ShieldCheck size={13} className="mt-0.5 shrink-0" /><span>Meta connections still need these server settings: {missingSetup.join(', ')}. Add them to the server environment (never `VITE_*` settings) and restart the service. Meta app review or tester roles may also be required.</span></div>}
+            {instagramSetupMissing && <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[9px] leading-4 text-amber-900"><ShieldCheck size={13} className="mt-0.5 shrink-0" /><span>Direct Instagram Login needs `INSTA_APP_ID` and `INSTA_APP_SECRET` on the server, plus Instagram API with Instagram Login configured in Meta. Add these as server environment variables, never `VITE_*` settings.</span></div>}
 
             {loading ? <p className="py-6 text-center text-[10px] text-slate-500"><LoaderCircle size={13} className="mr-1 inline animate-spin" />Loading connections…</p> : (
                 <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
