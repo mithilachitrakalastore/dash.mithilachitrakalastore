@@ -16,6 +16,9 @@ const imageFromProduct = (product) => {
         : typeof product.images === 'string' ? product.images.split(',') : [];
     return [image, ...images].find((value) => typeof value === 'string' && value.startsWith('https://')) || '';
 };
+const productPageUrl = (product) => product?.slug
+    ? `https://mithilachitrakalastore.com.np/product/${encodeURIComponent(product.slug)}`
+    : '';
 // The API reports `publicUrlConfigured` beside `providers`; merge it so the Connect button reads one object.
 const normalizeProviders = (social = {}) => ({
     meta: Boolean(social.providers?.meta),
@@ -36,6 +39,7 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
     const [notice, setNotice] = useState('');
     const [accountId, setAccountId] = useState('');
     const [caption, setCaption] = useState('');
+    const [productId, setProductId] = useState('');
     const [mediaUrl, setMediaUrl] = useState('');
     const [mediaType, setMediaType] = useState('image');
     const [privacyLevel, setPrivacyLevel] = useState('');
@@ -82,6 +86,12 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
     ].filter(Boolean), [providers]);
     const instagramSetupMissing = !providers.instagram;
     const selectedAccount = useMemo(() => accounts.find((account) => account.id === accountId), [accounts, accountId]);
+    const selectedProduct = useMemo(
+        () => products.find((product) => String(product.id) === productId),
+        [products, productId]
+    );
+    const selectedProductUrl = productPageUrl(selectedProduct);
+    const publishCaption = [caption.trim(), selectedProductUrl].filter(Boolean).join('\n\n');
     const connect = async (provider) => {
         setBusy(`connect-${provider}`);
         setError('');
@@ -110,8 +120,12 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
     const publish = async (event) => {
         event.preventDefault();
         if (!selectedAccount) return;
+        if (publishCaption.length > 2200) {
+            setError('Caption and product link must be 2,200 characters or fewer.');
+            return;
+        }
         const confirmed = window.confirm(
-            `Publish this post now to ${selectedAccount.account_name} on ${platformLabels[selectedAccount.platform]}? This will create a live post on that account.`
+            `Publish this post now to ${selectedAccount.account_name} on ${platformLabels[selectedAccount.platform]}?${selectedProductUrl ? `\n\nProduct link: ${selectedProductUrl}` : ''}\n\nThis will create a live post on that account.`
         );
         if (!confirmed) return;
         setBusy('publish');
@@ -121,17 +135,20 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
             const { post } = await aiDashboardService.publishMarketingSocialPost({
                 platform: selectedAccount.platform,
                 accountId: selectedAccount.id,
-                caption,
+                caption: publishCaption,
                 mediaUrl: mediaType === 'text' ? '' : mediaUrl.trim(),
                 mediaType,
                 privacyLevel,
             }, token);
             setPosts((current) => [post, ...current]);
             setCaption('');
+            setProductId('');
             setMediaUrl('');
             setNotice(post.status === 'processing'
                 ? 'TikTok accepted the post. Check its status as processing completes.'
-                : 'Your post was published successfully.');
+                : selectedProductUrl
+                    ? 'Your post was published with the product link in its caption.'
+                    : 'Your post was published successfully.');
         } catch (publishError) {
             setError(publishError.message || 'Unable to publish this post.');
             try { await refresh(); } catch { /* Keep the provider error visible. */ }
@@ -153,6 +170,7 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
     };
     const mediaFromProduct = (event) => {
         const product = products.find((item) => String(item.id) === event.target.value);
+        setProductId(event.target.value);
         if (product) {
             const url = imageFromProduct(product);
             if (url) {
@@ -202,8 +220,9 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
                         <div className="flex items-center justify-between gap-2"><h3 className="text-[10px] font-extrabold text-slate-800">Prepare a post</h3>{selectedAccount && <span className="text-[8px] text-slate-500">To {selectedAccount.account_name}</span>}</div>
                         <label className="block"><span className="mb-1 block text-[9px] font-bold text-slate-600">Account</span><select required disabled={!accounts.length} value={accountId} onChange={(event) => { const next = accounts.find((account) => account.id === event.target.value); setAccountId(event.target.value); if (next) { setPrivacyLevel(next.metadata?.privacyOptions?.[0] || ''); setMediaType(next.platform === 'tiktok' ? 'video' : 'image'); } }} className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[9px]">{!accounts.length && <option value="">Connect an account first</option>}{accounts.map((account) => <option key={account.id} value={account.id}>{platformLabels[account.platform]} · {account.account_name}</option>)}</select></label>
                         <label className="block"><span className="mb-1 block text-[9px] font-bold text-slate-600">Caption</span><textarea required maxLength={2200} rows={3} value={caption} onChange={(event) => setCaption(event.target.value)} placeholder="Write your post caption…" className="w-full resize-y rounded-md border border-stone-200 px-2.5 py-2 text-[10px] outline-none focus:border-[#bd6740]" /></label>
+                        {products.some((product) => productPageUrl(product)) && <label className="block"><span className="mb-1 block text-[9px] font-bold text-slate-600">Add a product link</span><select value={productId} onChange={mediaFromProduct} className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[9px]"><option value="">No product selected</option>{products.filter((product) => productPageUrl(product)).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select>{selectedProductUrl && <span className="mt-1 block text-[8px] text-slate-500">Added to caption: <a href={selectedProductUrl} target="_blank" rel="noreferrer" className="text-[#a74427] underline">{selectedProductUrl}</a></span>}{selectedAccount?.platform === 'instagram' && selectedProductUrl && <span className="mt-1 block text-[8px] text-slate-500">Instagram captions don’t make links clickable. Customers can copy this URL or use your profile link.</span>}</label>}
                         {selectedAccount?.platform !== 'facebook' || mediaType !== 'text' ? <div className="grid gap-2 sm:grid-cols-[1fr_1.4fr]">
-                            {products.some((product) => imageFromProduct(product)) && <label><span className="mb-1 block text-[9px] font-bold text-slate-600">Use a product image</span><select defaultValue="" onChange={mediaFromProduct} className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[9px]"><option value="">Choose product…</option>{products.filter((product) => imageFromProduct(product)).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>}
+                            {products.some((product) => imageFromProduct(product)) && <label><span className="mb-1 block text-[9px] font-bold text-slate-600">Use a product image</span><select defaultValue="" onChange={mediaFromProduct} className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-[9px]"><option value="">Choose product image…</option>{products.filter((product) => imageFromProduct(product)).map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label>}
                             <label className="block"><span className="mb-1 block text-[9px] font-bold text-slate-600">Public HTTPS media URL</span><input required type="url" value={mediaUrl} onChange={(event) => setMediaUrl(event.target.value)} placeholder="https://…" className="w-full rounded-md border border-stone-200 px-2.5 py-1.5 text-[9px] outline-none focus:border-[#bd6740]" /></label>
                         </div> : null}
                         <div className="grid gap-2 sm:grid-cols-2">
