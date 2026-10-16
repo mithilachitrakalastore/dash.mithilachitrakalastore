@@ -6,7 +6,8 @@ const emptyProduct = {
     name: '', description: '', product_code: '', key_features: '', price: '', compare_price: '', storeName: '',
     image: '', images: [], category: '', style: '', theme: '', tags: '', custom_tags: '',
     stock: '', location: '', material: '', length: '', delivery: '', instruction: '',
-    authenticity: '', visible_to_users: false,
+    authenticity: '', visible_to_users: false, advance_payment_enabled: false,
+    advance_payment_type: 'percentage', advance_payment_value: '',
 };
 
 const fieldClass = 'w-full rounded-xl border border-stone-200 bg-[#f9f7f3] px-4 py-3 text-base text-stone-800 outline-none transition focus:border-[#5c1111] focus:ring-2 focus:ring-[#5c1111]/10';
@@ -45,6 +46,9 @@ export const ProductsPage = ({ products = [], categories = [], storeName = '', s
             price: product.price ?? '',
             compare_price: product.compare_price ?? '',
             stock: product.stock ?? '',
+            advance_payment_enabled: Boolean(product.advance_payment_enabled),
+            advance_payment_type: product.advance_payment_type || 'percentage',
+            advance_payment_value: product.advance_payment_value ?? '',
         } : { ...emptyProduct, storeName });
     };
 
@@ -126,6 +130,9 @@ export const ProductsPage = ({ products = [], categories = [], storeName = '', s
             ? selected.filter((item) => item !== category).join(', ')
             : [...selected, category].join(', '));
     };
+    const advancePaymentAmount = !draft ? 0 : draft.advance_payment_type === 'percentage'
+        ? (Number(draft.price) * Number(draft.advance_payment_value) / 100)
+        : Number(draft.advance_payment_value);
 
     return (
         <div>
@@ -209,6 +216,17 @@ export const ProductsPage = ({ products = [], categories = [], storeName = '', s
                                         <label><span className={labelClass}>Compare Price (Rs.)</span><input type="number" min="0" step="0.01" value={draft.compare_price} onChange={(event) => updateDraft('compare_price', event.target.value)} className={fieldClass} placeholder="0" /></label>
                                         <label><span className={labelClass}>Stock Quantity</span><input required type="number" min="0" step="1" value={draft.stock} onChange={(event) => updateDraft('stock', event.target.value)} className={fieldClass} placeholder="0" /></label>
                                         <label><span className={labelClass}>Product Code</span><input value={draft.product_code} onChange={(event) => updateDraft('product_code', event.target.value)} className={fieldClass} placeholder="MCS-ART-102" /></label>
+                                        <div className="md:col-span-2 rounded-xl border border-[#e2d8c9] bg-[#fcfaf7] p-4">
+                                            <label className="flex cursor-pointer items-start gap-3">
+                                                <input type="checkbox" checked={Boolean(draft.advance_payment_enabled)} onChange={(event) => updateDraft('advance_payment_enabled', event.target.checked)} className="mt-1 h-4 w-4 accent-[#5c1111]" />
+                                                <span><strong className="block text-sm font-bold text-stone-800">Offer an advance payment</strong><small className="mt-1 block text-xs leading-5 text-stone-500">Set the required deposit for this product. No payment gateway is used; an administrator verifies payments manually in Orders / Billing.</small></span>
+                                            </label>
+                                            {draft.advance_payment_enabled && <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                                                <label><span className={labelClass}>Advance type</span><select value={draft.advance_payment_type} onChange={(event) => updateDraft('advance_payment_type', event.target.value)} className={fieldClass}><option value="percentage">Percentage of product price</option><option value="fixed">Fixed amount (Rs.)</option></select></label>
+                                                <label><span className={labelClass}>{draft.advance_payment_type === 'percentage' ? 'Advance percentage (%)' : 'Advance amount (Rs.)'}</span><input required type="number" min="0.01" max={draft.advance_payment_type === 'percentage' ? 100 : Number(draft.price) || undefined} step="0.01" value={draft.advance_payment_value} onChange={(event) => updateDraft('advance_payment_value', event.target.value)} className={fieldClass} placeholder={draft.advance_payment_type === 'percentage' ? 'e.g. 30' : 'e.g. 500'} /></label>
+                                                <p className="text-xs text-stone-600 sm:col-span-2">{Number.isFinite(advancePaymentAmount) && advancePaymentAmount > 0 ? `Advance due: ${currency(advancePaymentAmount)}` : 'Enter an advance value greater than zero.'}</p>
+                                            </div>}
+                                        </div>
                                     </div>
                                 </section>
                                 <section id="product-details" className="scroll-mt-3 rounded-2xl border border-[#e2d8c9] bg-white p-4 shadow-sm sm:p-6">

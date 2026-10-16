@@ -4,7 +4,7 @@ This folder is a separately deployable full-stack application. Its React client 
 
 ## Deploy the standalone dashboard and API
 
-1. Review and run `schema.sql` in the Supabase SQL editor. It adds a nullable Google Auth user ID to `public.users` with a unique index (without modifying existing users), creates the dashboard settings/audit tables, support ticket/message tables, administrator-managed marketing campaign plans and automation definitions/run history, and adds an atomic daily/monthly request-budget reservation function.
+1. Review and run `schema.sql` in the Supabase SQL editor. It adds a nullable Google Auth user ID to `public.users` with a unique index (without modifying existing users), adds per-product manual advance-payment settings to `public.products`, creates the dashboard settings/audit tables, support ticket/message tables, administrator-managed marketing campaign plans and automation definitions/run history, and adds an atomic daily/monthly request-budget reservation function.
 2. Create a Node web service from the `AI_Dashbord` folder. Set the build command to `npm install && npm run build` and the start command to `npm start`. The service uses the host-provided `PORT`.
 3. Set these server environment variables on that service: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `GEMINI_API_KEY`, `RESEND_API_KEY`, `ADMIN_EMAIL_TOKEN_SECRET`, and, only for cross-origin frontend hosting, `AI_DASHBOARD_ORIGINS`. The anon key is public, but the dashboard loads it from its API config endpoint rather than embedding it in the frontend build. Do not set secrets as `VITE_*` variables. Optional `EMAIL_HELLO`, `EMAIL_ORDERS`, `EMAIL_SUPPORT`, and `EMAIL_SECURITY` values override the corresponding verified sender addresses. Social publishing additionally needs the social-platform app credentials and token-encryption key described below.
 4. For a single service serving both the app and API, leave `VITE_API_BASE_URL=/api`. If you host the frontend separately, set its build-time `VITE_API_BASE_URL` to the AI API service origin plus `/api`, and configure `AI_DASHBOARD_ORIGINS` on the API server to the exact frontend HTTPS origin.
@@ -52,6 +52,7 @@ The frontend default `VITE_API_BASE_URL=/api` is correct when Render serves the 
 
 - Authenticated, server-verified active-seller and active-admin endpoints.
 - Authenticated management API for seller-owned products/orders and admin-managed global order fulfillment, billing/payment verification, seller payouts, artisan account status, and commission policy. Mutating requests verify the signed dashboard session and enforce role and seller ownership server-side.
+- Product listings can define a fixed-amount or percentage advance payment. No payment gateway is used; administrators manually verify customer payments from Orders / Billing.
 - The Wishlists page summarizes product saves and customer interest for the full store for administrators, or only products owned by the signed-in seller.
 - Administrator-only Hero Slides and Cultural Journal pages create, edit, publish, and remove homepage slides and journal posts through role-checked management actions.
 - The Billing & Print page renders a printable invoice for orders the signed-in seller/admin can access.

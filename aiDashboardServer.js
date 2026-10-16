@@ -3071,6 +3071,21 @@ export const registerAIDashboardRoutes = ({
                 if (!Number.isFinite(price) || price < 0 || !Number.isFinite(stock) || stock < 0) {
                     return res.status(400).json({ error: 'Product price and stock must be valid non-negative numbers.' });
                 }
+                const advancePaymentEnabled = productData.advance_payment_enabled === true;
+                if (productData.advance_payment_enabled != null && typeof productData.advance_payment_enabled !== 'boolean') {
+                    return res.status(400).json({ error: 'Advance payment setting must be enabled or disabled.' });
+                }
+                const advancePaymentType = productData.advance_payment_type;
+                const advancePaymentValue = Number(productData.advance_payment_value);
+                if (advancePaymentEnabled && (
+                    !['fixed', 'percentage'].includes(advancePaymentType) ||
+                    !Number.isFinite(advancePaymentValue) ||
+                    advancePaymentValue <= 0 ||
+                    (advancePaymentType === 'percentage' && advancePaymentValue > 100) ||
+                    (advancePaymentType === 'fixed' && advancePaymentValue > price)
+                )) {
+                    return res.status(400).json({ error: 'Enter a valid advance amount or percentage for this product.' });
+                }
                 const productId = payload.productId || null;
                 let previous = null;
                 if (productId) {
@@ -3097,6 +3112,9 @@ export const registerAIDashboardRoutes = ({
                     custom_tags: Array.isArray(productData.custom_tags) ? productData.custom_tags.join(' · ') : String(productData.custom_tags || ''),
                     key_features: String(productData.key_features || ''),
                     compare_price: Number(productData.compare_price ?? 0) || 0,
+                    advance_payment_enabled: advancePaymentEnabled,
+                    advance_payment_type: advancePaymentEnabled ? advancePaymentType : null,
+                    advance_payment_value: advancePaymentEnabled ? advancePaymentValue : null,
                 };
                 const query = productId
                     ? supabase.from('products').update(normalized).eq('id', productId).select('*').single()

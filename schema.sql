@@ -5,6 +5,26 @@ create unique index if not exists users_google_auth_user_id_key
     on public.users (google_auth_user_id)
     where google_auth_user_id is not null;
 
+alter table public.products
+    add column if not exists advance_payment_enabled boolean not null default false,
+    add column if not exists advance_payment_type text,
+    add column if not exists advance_payment_value numeric(12, 2);
+
+alter table public.products
+    drop constraint if exists products_advance_payment_check;
+alter table public.products
+    add constraint products_advance_payment_check
+    check (
+        not advance_payment_enabled or (
+            advance_payment_type is not null
+            and advance_payment_value is not null
+            and advance_payment_type in ('fixed', 'percentage')
+            and advance_payment_value > 0
+            and (advance_payment_type <> 'percentage' or advance_payment_value <= 100)
+            and (advance_payment_type <> 'fixed' or advance_payment_value <= price)
+        )
+    );
+
 create table if not exists public.ai_dashboard_settings (
     id integer primary key check (id = 1),
     enabled boolean not null default true,
