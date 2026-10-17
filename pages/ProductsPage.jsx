@@ -18,11 +18,16 @@ const imageList = (images) => Array.isArray(images)
     : typeof images === 'string' ? images.split(',').map((image) => image.trim()).filter(Boolean) : [];
 const productImage = (product) => (Array.isArray(product.image) ? product.image[0] : product.image) || imageList(product.images)[0] || '';
 
-export const ProductsPage = ({ products = [], categories = [], storeName = '', searchTerm = '', onAction, onUploadSignature, loading }) => {
+export const ProductsPage = ({ products = [], categories = [], storeName = '', searchTerm = '', onAction, onUploadSignature, onLoadCloudinaryImages, loading }) => {
     const [filter, setFilter] = useState(searchTerm);
     const [draft, setDraft] = useState(null);
     const [busy, setBusy] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [showCloudinaryImages, setShowCloudinaryImages] = useState(false);
+    const [cloudinaryImages, setCloudinaryImages] = useState([]);
+    const [cloudinaryCursor, setCloudinaryCursor] = useState('');
+    const [cloudinaryLoading, setCloudinaryLoading] = useState(false);
+    const [cloudinaryError, setCloudinaryError] = useState('');
     const [newCategory, setNewCategory] = useState('');
     const [formError, setFormError] = useState('');
     const fileInput = useRef(null);
@@ -34,9 +39,33 @@ export const ProductsPage = ({ products = [], categories = [], storeName = '', s
     }), [products, filter]);
 
     const updateDraft = (key, value) => setDraft((current) => ({ ...current, [key]: value }));
+    const loadCloudinaryImages = async (cursor = '') => {
+        setCloudinaryLoading(true);
+        setCloudinaryError('');
+        try {
+            const result = await onLoadCloudinaryImages(cursor);
+            setCloudinaryImages((current) => {
+                const images = cursor ? [...current, ...(result.images || [])] : (result.images || []);
+                return [...new Map(images.map((image) => [image.publicId, image])).values()];
+            });
+            setCloudinaryCursor(result.nextCursor || '');
+        } catch (error) {
+            setCloudinaryError(error.message || 'Unable to load images from Cloudinary.');
+        } finally {
+            setCloudinaryLoading(false);
+        }
+    };
+    const selectCloudinaryImage = (url) => setDraft((current) => {
+        const images = [...new Set([...imageList(current.images), url])];
+        return { ...current, image: current.image || url, images };
+    });
     const openProduct = (product = null) => {
         setNewCategory('');
         setFormError('');
+        setShowCloudinaryImages(false);
+        setCloudinaryImages([]);
+        setCloudinaryCursor('');
+        setCloudinaryError('');
         setDraft(product ? {
             ...emptyProduct,
             ...product,
@@ -242,6 +271,37 @@ export const ProductsPage = ({ products = [], categories = [], storeName = '', s
                                 <section id="product-images" className="scroll-mt-3 rounded-2xl border border-[#e2d8c9] bg-white p-4 shadow-sm sm:p-6">
                                     <div className="mb-4 flex items-center justify-between"><h3 className={sectionTitleClass}>Product Images</h3><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-emerald-700">Media</span></div>
                                     <div className="mb-3 flex items-center justify-between gap-3"><span className={`${labelClass} mb-0`}>Add product photos</span><button type="button" onClick={() => fileInput.current?.click()} disabled={uploading} className="rounded-xl bg-[#5c1111] px-4 py-2.5 text-[11px] font-black uppercase tracking-wider text-white disabled:opacity-50">{uploading ? 'Uploading…' : 'Upload Images'}</button><input ref={fileInput} type="file" accept="image/*" multiple onChange={uploadImages} className="hidden" /></div>
+                                    <button type="button" onClick={() => {
+                                        const open = !showCloudinaryImages;
+                                        setShowCloudinaryImages(open);
+                                        if (open) loadCloudinaryImages();
+                                    }} disabled={cloudinaryLoading} className="mb-3 rounded-xl border border-[#5c1111] px-4 py-2.5 text-[11px] font-black uppercase tracking-wider text-[#5c1111] disabled:opacity-50">
+                                        {showCloudinaryImages ? 'Hide Cloudinary Library' : 'Choose from Cloudinary'}
+                                    </button>
+                                    {showCloudinaryImages && <div className="mb-4 rounded-xl border border-[#e2d8c9] bg-[#faf8f4] p-3">
+                                        <p className="mb-3 text-xs text-stone-600">Choose from images already uploaded to the mithila-products Cloudinary folder.</p>
+                                        {cloudinaryError && <p role="alert" className="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs text-rose-800">{cloudinaryError}</p>}
+                                        {cloudinaryImages.length > 0 && <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                            {cloudinaryImages.map((image) => {
+                                                const added = imageList(draft.images).includes(image.url) || draft.image === image.url;
+                                                return <div key={image.publicId} className="overflow-hidden rounded-lg border border-stone-200 bg-white">
+                                                    <img src={image.url} alt={image.publicId} className="aspect-square w-full object-cover" loading="lazy" />
+                                                    <div className="flex gap-1 p-1.5">
+                                                        <button type="button" onClick={() => selectCloudinaryImage(image.url)} className="flex-1 rounded-md bg-[#5c1111] px-2 py-1.5 text-[9px] font-bold text-white">{added ? 'Added' : 'Add photo'}</button>
+                                                        <button type="button" onClick={() => {
+                                                            selectCloudinaryImage(image.url);
+                                                            updateDraft('image', image.url);
+                                                        }} className="flex-1 rounded-md border border-stone-200 px-2 py-1.5 text-[9px] font-bold text-stone-700">Set primary</button>
+                                                    </div>
+                                                </div>;
+                                            })}
+                                        </div>}
+                                        {!cloudinaryLoading && cloudinaryImages.length === 0 && !cloudinaryError && <p className="py-3 text-center text-xs text-stone-500">No images found in the product uploads folder.</p>}
+                                        <div className="mt-3 flex items-center justify-between">
+                                            {cloudinaryLoading && <span className="text-xs text-stone-500">Loading Cloudinary images…</span>}
+                                            {!cloudinaryLoading && cloudinaryCursor && <button type="button" onClick={() => loadCloudinaryImages(cloudinaryCursor)} className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-xs font-bold text-stone-700">Load more</button>}
+                                        </div>
+                                    </div>}
                                     <label><span className={labelClass}>Primary Image URL</span><input type="url" value={draft.image || ''} onChange={(event) => updateDraft('image', event.target.value)} className={fieldClass} placeholder="https://…" /></label>
                                     {!!imageList(draft.images).length && <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5">{imageList(draft.images).map((url) => <div key={url} className="relative aspect-square overflow-hidden rounded-xl border"><img src={url} alt="Product" className="h-full w-full object-cover" /><button type="button" onClick={() => setDraft((current) => { const images = imageList(current.images).filter((image) => image !== url); return { ...current, images, image: current.image === url ? images[0] || '' : current.image }; })} className="absolute right-1 top-1 rounded-full bg-white/90 p-1 text-rose-700"><X size={12} /></button></div>)}</div>}
                                     <p className="mt-2 text-xs text-stone-500">Upload image files (10 MB maximum each) or paste a direct image URL.</p>

@@ -267,7 +267,7 @@ export const DashboardApp = ({ currentUser, onSignOut }) => {
             case 'ai-command-center':
                 return <AICommandCenterPage enabled={settings.enabled} providerConfigured={overview.providerConfigured} onRunCommand={runCommand} submitting={submitting} />;
             case 'products':
-                return <ProductsPage products={management?.products || store.products || []} categories={management?.categories || []} storeName={management?.storeName || currentUser.storeName || ''} searchTerm={searchTerm} onAction={runStoreAction} onUploadSignature={() => aiDashboardService.getCloudinaryUploadSignature(currentUser.emailAdminToken)} loading={managementLoading} />;
+                return <ProductsPage products={management?.products || store.products || []} categories={management?.categories || []} storeName={management?.storeName || currentUser.storeName || ''} searchTerm={searchTerm} onAction={runStoreAction} onUploadSignature={() => aiDashboardService.getCloudinaryUploadSignature(currentUser.emailAdminToken)} onLoadCloudinaryImages={(cursor) => aiDashboardService.getCloudinaryImages(currentUser.emailAdminToken, cursor)} loading={managementLoading} />;
             case 'inventory':
                 return <InventoryPage products={management?.products || store.products || []} threshold={settings.lowStockThreshold} />;
             case 'orders':

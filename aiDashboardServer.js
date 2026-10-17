@@ -892,6 +892,7 @@ export const registerAIDashboardRoutes = ({
         security: process.env.EMAIL_SECURITY || 'security@mithilachitrakalastore.com.np',
     };
     const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+    let cloudinaryFolderField = null;
 
     app.use('/api/admin/ai', (req, res, next) => {
         res.set('Cache-Control', 'no-store');
@@ -2639,6 +2640,72 @@ export const registerAIDashboardRoutes = ({
         } catch (error) {
             console.error('AI dashboard image upload signature failed:', error);
             return res.status(500).json({ error: 'Unable to prepare secure image upload.' });
+        }
+    });
+
+    app.get('/api/admin/ai/cloudinary/images', async (req, res) => {
+        try {
+            const authorization = await getAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            if (!cloudinary.apiKey || !cloudinary.apiSecret || !cloudinary.cloudName) {
+                return res.status(503).json({ error: 'Cloudinary image browsing is not configured on the dashboard server.' });
+            }
+            const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : '';
+            if (cursor.length > 2048) return res.status(400).json({ error: 'Cloudinary image cursor is invalid.' });
+
+            const cloudinaryAuthorization = `Basic ${Buffer.from(`${cloudinary.apiKey}:${cloudinary.apiSecret}`).toString('base64')}`;
+            if (!cloudinaryFolderField) {
+                const configResponse = await fetch(
+                    `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudinary.cloudName)}/config?settings=true`,
+                    { headers: { Authorization: cloudinaryAuthorization } }
+                );
+                const configData = await configResponse.json().catch(() => ({}));
+                if (!configResponse.ok) {
+                    console.error('Cloudinary folder mode lookup failed:', configResponse.status, configData.error?.message || 'No provider error details.');
+                    return res.status(502).json({ error: 'Unable to load images from Cloudinary.' });
+                }
+                cloudinaryFolderField = configData.settings?.folder_mode === 'dynamic' ? 'asset_folder'
+                    : configData.settings?.folder_mode === 'fixed' ? 'folder' : '';
+                if (!cloudinaryFolderField) {
+                    console.error('Cloudinary folder mode lookup returned an unsupported configuration.');
+                    return res.status(502).json({ error: 'Unable to determine the Cloudinary product image folder.' });
+                }
+            }
+            const cloudinaryResponse = await fetch(
+                `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudinary.cloudName)}/resources/search`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: cloudinaryAuthorization,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        expression: `resource_type:image AND ${cloudinaryFolderField}="mithila-products"`,
+                        sort_by: [{ created_at: 'desc' }],
+                        max_results: 30,
+                        ...(cursor ? { next_cursor: cursor } : {}),
+                    }),
+                }
+            );
+            const cloudinaryData = await cloudinaryResponse.json().catch(() => ({}));
+            if (!cloudinaryResponse.ok) {
+                const message = cloudinaryData.error?.message;
+                console.error('Cloudinary image library request failed:', cloudinaryResponse.status, message || 'No provider error details.');
+                return res.status(502).json({ error: 'Unable to load images from Cloudinary.' });
+            }
+            return res.json({
+                images: (Array.isArray(cloudinaryData.resources) ? cloudinaryData.resources : []).flatMap((resource) => resource.secure_url ? [{
+                    publicId: resource.public_id,
+                    url: resource.secure_url,
+                    createdAt: resource.created_at,
+                    width: resource.width,
+                    height: resource.height,
+                }] : []),
+                nextCursor: cloudinaryData.next_cursor || null,
+            });
+        } catch (error) {
+            console.error('AI dashboard Cloudinary image library load failed:', error);
+            return res.status(500).json({ error: 'Unable to load images from Cloudinary.' });
         }
     });
 

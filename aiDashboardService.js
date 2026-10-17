@@ -99,6 +99,10 @@ export const aiDashboardService = {
         body: JSON.stringify(payload),
     }),
     getCloudinaryUploadSignature: (token) => request('/admin/ai/cloudinary/signature', token),
+    getCloudinaryImages: (token, cursor = '') => {
+        const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+        return request(`/admin/ai/cloudinary/images${query}`, token);
+    },
     getEmailTemplates: (token) => request('/admin/ai/email/templates', token),
     getEmailTemplate: (templateId, token) => request(`/admin/ai/email/templates/${encodeURIComponent(templateId)}`, token),
     sendAdminEmail: (payload, token) => request('/admin/ai/email/send', token, {
