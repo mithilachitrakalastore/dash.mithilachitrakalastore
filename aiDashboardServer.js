@@ -12,6 +12,15 @@ const EMAIL_LOGO_URL = 'https://res.cloudinary.com/djmbuuz28/image/upload/v17611
 const AUTO_EMAIL_TEMPLATE_VARIABLES = new Set(['USER_NAME', 'USER_EMAIL', 'APP_NAME', 'CREATED_DATE', 'YEAR']);
 const requestWindows = new Map();
 const sessionWindows = new Map();
+const createProductSlug = (name, id) => {
+    const base = String(name).normalize('NFKD').toLowerCase()
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 160)
+        .replace(/-+$/g, '') || 'product';
+    return `${base}-${String(id).toLowerCase().replace(/[^a-z0-9]/g, '').slice(-10)}`;
+};
 
 const getSocialTokenEncryptionKey = () => {
     const configured = String(process.env.SOCIAL_TOKEN_ENCRYPTION_KEY || '');
@@ -3096,9 +3105,11 @@ export const registerAIDashboardRoutes = ({
                     if (!data) return res.status(404).json({ error: 'Product not found for this account.' });
                     previous = data;
                 }
+                const newProductId = productId ? null : `p-${crypto.randomBytes(5).toString('hex')}`;
                 const normalized = {
                     ...(previous || {}),
                     ...productData,
+                    slug: previous?.slug || createProductSlug(productData.name, newProductId || previous?.id),
                     seller_id: isAdmin ? productData.seller_id || previous?.seller_id || admin.id : admin.id,
                     name: String(productData.name).trim(),
                     price,
@@ -3118,7 +3129,7 @@ export const registerAIDashboardRoutes = ({
                 };
                 const query = productId
                     ? supabase.from('products').update(normalized).eq('id', productId).select('*').single()
-                    : supabase.from('products').insert({ ...normalized, id: `p-${crypto.randomBytes(5).toString('hex')}` }).select('*').single();
+                    : supabase.from('products').insert({ ...normalized, id: newProductId }).select('*').single();
                 const { data, error } = await query;
                 if (error) throw new Error(`Unable to save product: ${error.message}`);
                 result = data;
