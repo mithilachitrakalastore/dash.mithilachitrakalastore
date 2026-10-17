@@ -1375,6 +1375,28 @@ export const registerAIDashboardRoutes = ({
         }
     });
 
+    app.delete('/api/admin/ai/marketing/social/posts/:postId', async (req, res) => {
+        try {
+            const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);
+            if (authorization.error) return res.status(authorization.status).json({ error: authorization.error });
+            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.postId)) {
+                return res.status(400).json({ error: 'Invalid social post ID.' });
+            }
+            const { data, error } = await supabase.from('marketing_social_posts')
+                .delete()
+                .eq('id', req.params.postId)
+                .in('status', ['draft', 'published', 'failed', 'cancelled'])
+                .select('id')
+                .maybeSingle();
+            if (error) throw new Error(`Unable to delete social post history: ${error.message}`);
+            if (!data) return res.status(409).json({ error: 'This post is not found or is still scheduled, publishing, or processing.' });
+            return res.json({ deleted: true });
+        } catch (error) {
+            console.error('AI dashboard social post history deletion failed:', error);
+            return res.status(500).json({ error: error.message || 'Unable to delete social post history.' });
+        }
+    });
+
     app.post('/api/admin/ai/marketing/social/generate-content', async (req, res) => {
         try {
             const authorization = await getEmailAdmin(req, supabase, verifyAdminToken);

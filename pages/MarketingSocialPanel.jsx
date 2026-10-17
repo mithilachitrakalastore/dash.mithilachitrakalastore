@@ -281,6 +281,20 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
             setBusy('');
         }
     };
+    const deletePost = async (post) => {
+        if (!window.confirm('Remove this entry from dashboard publishing history? This does not delete a post already published on the social platform.')) return;
+        setBusy(post.id);
+        setError('');
+        try {
+            await aiDashboardService.deleteMarketingSocialPost(post.id, token);
+            setPosts((current) => current.filter((item) => item.id !== post.id));
+            setNotice('Post removed from publishing history.');
+        } catch (deleteError) {
+            setError(deleteError.message || 'Unable to delete this publishing history entry.');
+        } finally {
+            setBusy('');
+        }
+    };
     const selectProduct = (event) => {
         setProductId(event.target.value);
     };
@@ -372,7 +386,7 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
                 {posts.length ? <div className="max-h-56 space-y-1.5 overflow-y-auto">{posts.slice(0, 30).map((post) => (
                     <div key={post.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-stone-100 bg-white px-2.5 py-2">
                         <div className="min-w-0"><p className="truncate text-[9px] font-semibold text-slate-700">{post.caption}</p><p className="mt-0.5 text-[8px] capitalize text-slate-500">{platformLabels[post.platform]} · {new Date(post.created_at).toLocaleString()}</p>{post.error_message && <p className="mt-1 text-[8px] text-rose-700">{post.error_message}</p>}</div>
-                        <div className="flex shrink-0 items-center gap-2"><span className={`rounded-full px-2 py-1 text-[8px] font-bold ${post.status === 'published' ? 'bg-emerald-50 text-emerald-700' : post.status === 'failed' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-800'}`}>{statusLabel[post.status] || post.status}</span>{post.status === 'scheduled' && post.scheduled_at && <span className="text-[8px] text-slate-500">{new Date(post.scheduled_at).toLocaleString('en-NP', { timeZone: 'Asia/Kathmandu' })} NPT</span>}{post.status === 'scheduled' && <button type="button" disabled={busy !== ''} onClick={() => cancelScheduledPost(post.id)} className="text-[8px] font-bold text-rose-700 hover:underline disabled:opacity-50">Cancel</button>}{post.status === 'processing' && post.platform === 'tiktok' && <button type="button" disabled={busy !== ''} onClick={() => checkStatus(post.id)} className="text-[8px] font-bold text-[#a74427] hover:underline disabled:opacity-50">Check</button>}</div>
+                        <div className="flex shrink-0 items-center gap-2"><span className={`rounded-full px-2 py-1 text-[8px] font-bold ${post.status === 'published' ? 'bg-emerald-50 text-emerald-700' : post.status === 'failed' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-800'}`}>{statusLabel[post.status] || post.status}</span>{post.status === 'scheduled' && post.scheduled_at && <span className="text-[8px] text-slate-500">{new Date(post.scheduled_at).toLocaleString('en-NP', { timeZone: 'Asia/Kathmandu' })} NPT</span>}{post.status === 'scheduled' && <button type="button" disabled={busy !== ''} onClick={() => cancelScheduledPost(post.id)} className="text-[8px] font-bold text-rose-700 hover:underline disabled:opacity-50">Cancel</button>}{post.status === 'processing' && post.platform === 'tiktok' && <button type="button" disabled={busy !== ''} onClick={() => checkStatus(post.id)} className="text-[8px] font-bold text-[#a74427] hover:underline disabled:opacity-50">Check</button>}{['draft', 'published', 'failed', 'cancelled'].includes(post.status) && <button type="button" disabled={busy !== ''} onClick={() => deletePost(post)} aria-label={`Delete ${post.status} post history entry`} title="Remove from dashboard history" className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"><Trash2 size={11} /></button>}</div>
                     </div>
                 ))}</div> : <p className="text-[9px] text-slate-500">Published posts and provider failures will appear here.</p>}
             </div>

@@ -31,8 +31,12 @@ const cloudinary = {
     apiSecret: process.env.CLOUDINARY_API_SECRET || '',
     cloudName: process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME || '',
 };
-const allowedOrigins = String(process.env.AI_DASHBOARD_PUBLIC_URL || '')
-    .split(',')
+const allowedOrigins = [
+    process.env.AI_DASHBOARD_ORIGINS,
+    process.env.AI_DASHBOARD_PUBLIC_URL,
+]
+    .filter(Boolean)
+    .flatMap((value) => value.split(','))
     .map((origin) => origin.trim().replace(/\/+$/, ''))
     .filter(Boolean);
 
@@ -118,7 +122,7 @@ app.use(cors({
         return callback(null, false);
     },
     allowedHeaders: ['Content-Type', 'Authorization'],
-    methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
 }));
 app.use(express.json({ limit: '512kb' }));
 

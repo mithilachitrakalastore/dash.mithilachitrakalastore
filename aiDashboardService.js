@@ -50,6 +50,9 @@ export const aiDashboardService = {
         body: JSON.stringify({}),
     }),
     getMarketingSocialPosts: (token) => request('/admin/ai/marketing/social/posts', token),
+    deleteMarketingSocialPost: (postId, token) => request(`/admin/ai/marketing/social/posts/${encodeURIComponent(postId)}`, token, {
+        method: 'DELETE',
+    }),
     publishMarketingSocialPost: (payload, token) => request('/admin/ai/marketing/social/posts', token, {
         method: 'POST',
         body: JSON.stringify(payload),
