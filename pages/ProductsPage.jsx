@@ -5,10 +5,12 @@ import { currency, PageHeading, SectionCard } from './shared';
 const emptyProduct = {
     name: '', description: '', product_code: '', key_features: '', price: '', compare_price: '', storeName: '',
     image: '', images: [], category: '', style: '', theme: '', tags: '', custom_tags: '',
-    stock: '', location: '', material: '', length: '', delivery: '', instruction: '',
+    stock: '', location: '', material: '', length: '', delivery: '', instruction: '', badge: '',
     authenticity: '', visible_to_users: false, advance_payment_enabled: false,
     advance_payment_type: 'percentage', advance_payment_value: '',
 };
+const PRODUCT_BADGE_PRESETS = ['Best Match', 'Recommended', 'Top', 'For You', 'Custom Sale'];
+const isPresetBadge = (badge) => PRODUCT_BADGE_PRESETS.some((label) => label.toLowerCase() === String(badge || '').trim().toLowerCase());
 
 const fieldClass = 'w-full rounded-xl border border-stone-200 bg-[#f9f7f3] px-4 py-3 text-base text-stone-800 outline-none transition focus:border-[#5c1111] focus:ring-2 focus:ring-[#5c1111]/10';
 const labelClass = 'mb-2 block text-[13px] font-bold uppercase tracking-[0.1em] text-stone-700';
@@ -30,6 +32,7 @@ export const ProductsPage = ({ products = [], categories = [], storeName = '', s
     const [cloudinaryError, setCloudinaryError] = useState('');
     const [newCategory, setNewCategory] = useState('');
     const [formError, setFormError] = useState('');
+    const [customBadgeMode, setCustomBadgeMode] = useState(false);
     const fileInput = useRef(null);
     const filtered = useMemo(() => products.filter((product) => {
         const query = filter.trim().toLowerCase();
@@ -62,6 +65,7 @@ export const ProductsPage = ({ products = [], categories = [], storeName = '', s
     const openProduct = (product = null) => {
         setNewCategory('');
         setFormError('');
+        setCustomBadgeMode(Boolean(product?.badge && !isPresetBadge(product.badge)));
         setShowCloudinaryImages(false);
         setCloudinaryImages([]);
         setCloudinaryCursor('');
@@ -223,8 +227,8 @@ export const ProductsPage = ({ products = [], categories = [], storeName = '', s
                     {formError && <p role="alert" className="mx-5 mt-3 shrink-0 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 sm:mx-8">{formError}</p>}
                     <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-6">
                         <div className="grid items-start gap-4 xl:grid-cols-[180px_minmax(0,1fr)_270px]">
-                            <nav aria-label="Product listing sections" className="grid grid-cols-3 gap-2 xl:sticky xl:top-1 xl:grid-cols-1 xl:gap-3">
-                                {[['01', 'Essentials', 'product-overview'], ['02', 'Story & craft', 'product-details'], ['03', 'Artwork images', 'product-images']].map(([number, label, target]) => <button key={target} type="button" onClick={() => document.getElementById(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="flex items-center gap-2 rounded-xl border border-[#e2d8c9] bg-white/80 p-2 text-left transition hover:border-[#8c5b43] hover:bg-white xl:gap-3 xl:p-3">
+                            <nav aria-label="Product listing sections" className="grid grid-cols-2 gap-2 xl:sticky xl:top-1 xl:grid-cols-1 xl:gap-3">
+                                {[['01', 'Essentials', 'product-overview'], ['02', 'Product badges', 'product-badges'], ['03', 'Story & craft', 'product-details'], ['04', 'Artwork images', 'product-images']].map(([number, label, target]) => <button key={target} type="button" onClick={() => document.getElementById(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="flex items-center gap-2 rounded-xl border border-[#e2d8c9] bg-white/80 p-2 text-left transition hover:border-[#8c5b43] hover:bg-white xl:gap-3 xl:p-3">
                                     <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#eee5d7] text-[10px] font-black text-[#75412f]">{number}</span><span className="text-[10px] font-bold text-stone-700 sm:text-xs">{label}</span>
                                 </button>)}
                             </nav>
@@ -256,6 +260,34 @@ export const ProductsPage = ({ products = [], categories = [], storeName = '', s
                                                 <p className="text-xs text-stone-600 sm:col-span-2">{Number.isFinite(advancePaymentAmount) && advancePaymentAmount > 0 ? `Advance due: ${currency(advancePaymentAmount)}` : 'Enter an advance value greater than zero.'}</p>
                                             </div>}
                                         </div>
+                                    </div>
+                                </section>
+                                <section id="product-badges" className="scroll-mt-3 rounded-2xl border border-[#e2d8c9] bg-white p-4 shadow-sm sm:p-6">
+                                    <div className="mb-5">
+                                        <h3 className={sectionTitleClass}>Product Badges</h3>
+                                        <p className="mt-1 text-xs leading-5 text-stone-500">Choose a manual badge independently of search tags, or leave this on automatic to use product performance and customer preferences.</p>
+                                    </div>
+                                    <div className="max-w-xl space-y-3">
+                                        <label className="block">
+                                            <span className={labelClass}>Badge to display</span>
+                                            <select
+                                                value={customBadgeMode ? 'custom' : draft.badge || 'automatic'}
+                                                onChange={(event) => {
+                                                    const { value } = event.target;
+                                                    setCustomBadgeMode(value === 'custom');
+                                                    updateDraft('badge', ['automatic', 'custom'].includes(value) ? '' : value);
+                                                }}
+                                                className={fieldClass}
+                                            >
+                                                <option value="automatic">Automatic (performance-based)</option>
+                                                {PRODUCT_BADGE_PRESETS.map((label) => <option key={label} value={label}>{label}</option>)}
+                                                <option value="custom">Custom label…</option>
+                                            </select>
+                                        </label>
+                                        {customBadgeMode && <label className="block">
+                                            <span className={labelClass}>Custom badge text</span>
+                                            <input maxLength={32} value={draft.badge || ''} onChange={(event) => updateDraft('badge', event.target.value)} className={fieldClass} placeholder="e.g. Limited Edition" />
+                                        </label>}
                                     </div>
                                 </section>
                                 <section id="product-details" className="scroll-mt-3 rounded-2xl border border-[#e2d8c9] bg-white p-4 shadow-sm sm:p-6">
