@@ -28,6 +28,8 @@ export const TavroPage = ({ token, enabled, providerConfigured }) => {
     const [chatInput, setChatInput] = useState('');
     const [customers, setCustomers] = useState([]);
     const [customerQuery, setCustomerQuery] = useState('');
+    const [customerOffset, setCustomerOffset] = useState(0);
+    const [customerHasMore, setCustomerHasMore] = useState(false);
     const [selectedCustomer, setSelectedCustomer] = useState(null);
     const [drafts, setDrafts] = useState([]);
     const [selectedDraftId, setSelectedDraftId] = useState('');
@@ -50,16 +52,20 @@ export const TavroPage = ({ token, enabled, providerConfigured }) => {
         setLoading(true);
         setError('');
         try {
-            const [conversationResult, draftResult, usageResult, prospectingResult] = await Promise.all([
+            const [conversationResult, draftResult, usageResult, prospectingResult, customerResult] = await Promise.all([
                 aiDashboardService.getTavroConversations(token),
                 aiDashboardService.getTavroEmailDrafts(token),
                 aiDashboardService.getTavroUsage(token),
                 aiDashboardService.getTavroProspecting(token),
+                aiDashboardService.listTavroCustomers(0, token),
             ]);
             setConversations(conversationResult.conversations || []);
             setDrafts(draftResult.drafts || []);
             setUsage(usageResult.usage || null);
             setProspecting(prospectingResult.prospecting || null);
+            setCustomers(customerResult.customers || []);
+            setCustomerHasMore(Boolean(customerResult.hasMore));
+            setCustomerOffset((customerResult.customers || []).length);
         } catch (loadError) {
             setError(loadError.message || 'Tavro could not load. Apply the Tavro database schema and retry.');
         } finally {
@@ -154,11 +160,30 @@ export const TavroPage = ({ token, enabled, providerConfigured }) => {
         setBusy('customers');
         setError('');
         try {
-            const result = await aiDashboardService.searchTavroCustomers(customerQuery, token);
+            const result = customerQuery.trim().length >= 2
+                ? await aiDashboardService.searchTavroCustomers(customerQuery, token)
+                : await aiDashboardService.listTavroCustomers(0, token);
             setCustomers(result.customers || []);
+            setCustomerHasMore(Boolean(result.hasMore));
+            setCustomerOffset((result.customers || []).length);
             setSelectedCustomer(null);
         } catch (searchError) {
             setError(searchError.message || 'Unable to search customer records.');
+        } finally {
+            setBusy('');
+        }
+    };
+
+    const loadMoreCustomers = async () => {
+        setBusy('customers-more');
+        setError('');
+        try {
+            const result = await aiDashboardService.listTavroCustomers(customerOffset, token);
+            setCustomers((current) => [...current, ...(result.customers || [])]);
+            setCustomerHasMore(Boolean(result.hasMore));
+            setCustomerOffset((current) => current + (result.customers || []).length);
+        } catch (loadError) {
+            setError(loadError.message || 'Unable to load more customer records.');
         } finally {
             setBusy('');
         }
@@ -169,7 +194,7 @@ export const TavroPage = ({ token, enabled, providerConfigured }) => {
         setError('');
         try {
             const result = await aiDashboardService.getTavroCustomer(customer.id, token);
-            setSelectedCustomer(result.customer);
+            setSelectedCustomer({ ...customer, ...result.customer });
         } catch (loadError) {
             setError(loadError.message || 'Unable to load customer history.');
         } finally {
@@ -447,33 +472,40 @@ export const TavroPage = ({ token, enabled, providerConfigured }) => {
             return (
                 <div className="grid gap-4 xl:grid-cols-[minmax(260px,.85fr)_minmax(0,1.4fr)]">
                     <SectionCard>
-                        <h2 className="text-xs font-extrabold">Search authorized customer records</h2>
+                        <h2 className="text-xs font-extrabold">Signed-up customers</h2>
+                        <p className="mt-1 text-[9px] leading-4 text-slate-500">Browse registered accounts and see their marketing-consent status. Only active, verified, explicitly opted-in, unsuppressed addresses can receive marketing email.</p>
                         <form onSubmit={searchCustomers} className="mt-3 flex gap-2">
                             <label className="sr-only" htmlFor="tavro-customer-search">Customer name, email, or identifier</label>
                             <input id="tavro-customer-search" value={customerQuery} onChange={(event) => setCustomerQuery(event.target.value)} maxLength={100} className={`${fieldClass} mt-0`} placeholder="Name, email, or ID" />
-                            <button type="submit" disabled={Boolean(busy) || customerQuery.trim().length < 2} className={buttonClass} aria-label="Search customers">{busy === 'customers' ? <LoaderCircle size={13} className="animate-spin" /> : <Search size={13} />}</button>
+                            <button type="submit" disabled={Boolean(busy)} className={buttonClass} aria-label={customerQuery.trim().length >= 2 ? 'Search customers' : 'Refresh customer list'}>{busy === 'customers' ? <LoaderCircle size={13} className="animate-spin" /> : <Search size={13} />}</button>
                         </form>
                         <div className="mt-4 space-y-1">
                             {customers.map((customer) => (
                                 <button key={customer.id} type="button" onClick={() => loadCustomer(customer)} className={`w-full rounded-md border px-3 py-2 text-left ${selectedCustomer?.id === customer.id ? 'border-orange-200 bg-orange-50' : 'border-transparent hover:bg-stone-50'}`}>
                                     <span className="block text-[10px] font-bold">{customer.name}</span>
                                     <span className="mt-1 block truncate text-[9px] text-slate-500">{customer.email || 'No email on record'}</span>
+                                    <span className={`mt-1 inline-block rounded px-1.5 py-0.5 text-[8px] font-bold ${customer.marketingEligible ? 'bg-emerald-50 text-emerald-800' : customer.suppressed ? 'bg-rose-50 text-rose-800' : 'bg-stone-100 text-slate-600'}`}>{customer.suppressed ? 'Suppressed' : customer.marketingEligible ? 'Marketing eligible' : customer.marketingConsent === 'revoked' ? 'Opted out' : customer.marketingConsent === 'granted' ? 'Consent needs review' : 'No marketing opt-in'}</span>
                                 </button>
                             ))}
-                            {!customers.length && <p className="py-5 text-[10px] text-slate-500">Search by at least two characters. Only customer accounts are returned.</p>}
+                            {!customers.length && <p className="py-5 text-[10px] text-slate-500">No customer accounts found.</p>}
                         </div>
+                        {customerQuery.trim().length < 2 && customerHasMore && <button type="button" onClick={loadMoreCustomers} disabled={Boolean(busy)} className="mt-3 w-full rounded border border-stone-200 px-3 py-2 text-[9px] font-bold disabled:opacity-50">{busy === 'customers-more' ? 'Loading…' : 'Load more customers'}</button>}
                     </SectionCard>
                     <SectionCard>
                         {!selectedCustomer ? <p className="text-[10px] text-slate-500">Select a customer to view their recorded order and support history.</p> : (
                             <div>
                                 <h2 className="text-sm font-extrabold">{selectedCustomer.name}</h2>
                                 <p className="mt-1 text-[10px] text-slate-500">{selectedCustomer.email || 'No email on record'} · Account status: {selectedCustomer.status}</p>
+                                <p className="mt-1 text-[9px] text-slate-500">Email verified: {selectedCustomer.emailVerified ? 'yes' : 'no'} · Marketing consent: {selectedCustomer.suppressed ? 'suppressed' : selectedCustomer.marketingConsent || 'none'}{selectedCustomer.marketingEligible ? ' · eligible for marketing' : ''}</p>
                                 <p className="mt-2 break-all text-[9px] text-slate-400">Customer ID: {selectedCustomer.id}</p>
                                 <div className="mt-5 grid gap-4 md:grid-cols-2">
                                     <div><h3 className="text-[10px] font-bold">Recent orders</h3>{selectedCustomer.orders.length ? selectedCustomer.orders.map((order) => <div key={order.id} className="mt-2 rounded border border-stone-100 p-2 text-[9px]"><p>#{order.id} · {order.status}</p><p className="mt-1 text-slate-500">{order.products.length ? order.products.join(', ') : 'No product names recorded'}</p></div>) : <p className="mt-2 text-[9px] text-slate-500">No orders found.</p>}</div>
                                     <div><h3 className="text-[10px] font-bold">Support history</h3>{selectedCustomer.supportTickets.length ? selectedCustomer.supportTickets.map((ticket) => <div key={ticket.id} className="mt-2 rounded border border-stone-100 p-2 text-[9px]"><p className="font-semibold">{ticket.subject}</p><p className="mt-1 text-slate-500">{ticket.category} · {ticket.status}</p></div>) : <p className="mt-2 text-[9px] text-slate-500">No support tickets found.</p>}</div>
                                 </div>
-                                <button type="button" onClick={() => { setActiveTab('email'); setEmailPurpose('support'); }} className={`${buttonClass} mt-5`}><Mail size={13} />Draft customer email</button>
+                                <div className="mt-5 flex flex-wrap gap-2">
+                                    <button type="button" onClick={() => { setActiveTab('email'); setEmailPurpose('support'); }} className={buttonClass}><Mail size={13} />Draft customer email</button>
+                                    {selectedCustomer.marketingEligible && <button type="button" onClick={() => { setActiveTab('email'); setEmailPurpose('marketing'); }} className="inline-flex items-center justify-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-bold text-emerald-800"><Mail size={13} />Draft opted-in marketing email</button>}
+                                </div>
                             </div>
                         )}
                     </SectionCard>

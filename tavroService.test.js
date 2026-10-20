@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { isAiJobActive, runTrackedAiJob, tryRunTrackedAiJob } from './aiJobTracker.js';
 import {
     createApprovalSnapshot,
     canTransitionEmailDraft,
@@ -112,6 +113,23 @@ test('daily prospect qualification never exceeds ten and excludes recent contact
 
     assert.equal(prospects.length, 10);
     assert.equal(prospects.some(({ id }) => id === '1'), false);
+});
+
+test('background AI work only starts when no tracked generation job is active', async () => {
+    let finishActiveJob;
+    const activeJob = runTrackedAiJob(() => new Promise((resolve) => { finishActiveJob = resolve; }));
+    assert.equal(isAiJobActive(), true);
+
+    const skipped = await tryRunTrackedAiJob(async () => 'should not run');
+    assert.equal(skipped.started, false);
+    finishActiveJob('finished');
+    await activeJob;
+    assert.equal(isAiJobActive(), false);
+
+    const started = await tryRunTrackedAiJob(async () => 'generated');
+    assert.equal(started.started, true);
+    assert.equal(started.result, 'generated');
+    assert.equal(isAiJobActive(), false);
 });
 
 test('approval is bound to exact email content, purpose, and version', () => {

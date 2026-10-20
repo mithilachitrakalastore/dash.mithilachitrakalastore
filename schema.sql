@@ -181,6 +181,31 @@ create index if not exists marketing_social_posts_due_schedule_idx
     on public.marketing_social_posts (scheduled_at)
     where status = 'scheduled';
 
+create table if not exists public.marketing_social_ai_settings (
+    id integer primary key check (id = 1),
+    enabled boolean not null default false,
+    updated_by text references public.users(id) on delete set null,
+    updated_at timestamptz not null default now()
+);
+
+insert into public.marketing_social_ai_settings (id)
+values (1)
+on conflict (id) do nothing;
+
+create table if not exists public.marketing_social_ai_runs (
+    id uuid primary key default gen_random_uuid(),
+    run_date date not null unique,
+    status text not null check (status in ('running', 'completed', 'failed')),
+    account_id uuid references public.marketing_social_accounts(id) on delete set null,
+    post_id uuid references public.marketing_social_posts(id) on delete set null,
+    started_at timestamptz not null default now(),
+    completed_at timestamptz,
+    error_summary text
+);
+
+create index if not exists marketing_social_ai_runs_started_idx
+    on public.marketing_social_ai_runs (started_at desc);
+
 create or replace function public.claim_due_marketing_social_posts(batch_size integer default 5)
 returns setof public.marketing_social_posts
 language plpgsql
@@ -214,11 +239,17 @@ grant execute on function public.claim_due_marketing_social_posts(integer) to se
 
 alter table public.marketing_social_accounts enable row level security;
 alter table public.marketing_social_posts enable row level security;
+alter table public.marketing_social_ai_settings enable row level security;
+alter table public.marketing_social_ai_runs enable row level security;
 
 comment on table public.marketing_social_accounts is
     'Admin-connected social accounts. Provider tokens are encrypted by the dashboard server before storage.';
 comment on table public.marketing_social_posts is
-    'Social post publishing history and provider job status for approved administrator submissions.';
+    'Social drafts and publishing history; AI-generated content remains unpublished until an administrator reviews and explicitly schedules or publishes it.';
+comment on table public.marketing_social_ai_settings is
+    'Opt-in switch for scheduled AI social post drafts; generated content remains an unpublished draft for human review.';
+comment on table public.marketing_social_ai_runs is
+    'Idempotent run history for the every-two-days AI social draft workflow.';
 
 create table if not exists public.support_tickets (
     id uuid primary key default gen_random_uuid(),

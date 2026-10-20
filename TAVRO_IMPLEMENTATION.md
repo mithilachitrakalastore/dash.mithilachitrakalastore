@@ -46,10 +46,10 @@ The readable repository at `C:\Windows\System32\harvey` is a Python 3.11+ FastAP
 ## Customer search and email workflow
 
 1. Sign in as an active administrator and open **Tavro → Customers**.
-2. Search by name, email, username, or exact customer ID; select a result to load bounded order and support history.
+2. Browse signed-up customer accounts or search by name, email, username, or exact customer ID. Each record shows email verification, marketing consent, suppression, and eligibility status.
 3. In **Email Studio**, select a support, order-update, or marketing purpose and tone, then generate a draft. Gemini receives a minimized context, and the generated draft is never sent automatically.
 4. Review the full recipient, subject, and message. Save edits before approval. Any saved edit invalidates the prior approval.
-5. Marketing requires a documented explicit opt-in date/evidence and has a suppression check. A support/order message does not become a marketing message merely because the text is promotional; choose the truthful purpose.
+5. Marketing drafts and sends require an active account, verified email, documented explicit opt-in for the current address, and no suppression. A support/order message does not become a marketing message merely because the text is promotional; choose the truthful purpose.
 6. Approve the saved exact content, then separately choose **Send approved email** and confirm the full message. Check Resend activity if delivery is uncertain. A draft whose provider outcome is uncertain remains locked to prevent a duplicate send.
 
 ## Daily opted-in prospect workflow
@@ -60,6 +60,14 @@ The readable repository at `C:\Windows\System32\harvey` is a Python 3.11+ FastAP
 - **Drafts, never autonomous sends:** Tavro generates an individual `draft` for each eligible account using Gemini and the public catalog. Every draft requires the administrator to review, approve, and separately confirm sending. Resend is not required to generate drafts, but must be configured for sending. Disabling the workflow pauses future scheduled/manual runs; it does not delete drafts already created.
 - **Prerequisites:** Back up and apply the updated `schema.sql`; record genuine opt-in evidence through Tavro; configure the server-side Gemini key/model; and enable the feature from the admin UI. Runs consume the existing shared dashboard AI budget and may stop when that budget is exhausted. No email is sent if consent is missing, revoked, stale for a different address, future-dated, or suppressed.
 - **Opt-out handling:** The generated draft provides the store's unsubscribe contact address, but inbound unsubscribe replies are not automatically processed because Tavro has no inbox integration. An administrator must record a revocation or suppression before any later send. Do not enable marketing without an operational process for handling opt-outs and applicable privacy/marketing-law review.
+
+## Social performance and AI post drafts
+
+- **Insights:** **Marketing & SEO** requests 30-day reach and engagement metrics for connected Facebook Pages and Instagram professional accounts when the connected token has the required platform scopes. Facebook/Instagram permissions and metrics vary by account type, app review, and API version; unsupported accounts show an explicit reason. TikTok insights are not currently available through this integration. Daily reach values are summed per day and are not a unique-person count across the whole 30-day period.
+- **Reconnect for insights:** Existing connections may lack the newly requested `read_insights`, `instagram_manage_insights`, or `instagram_business_manage_insights` scopes. Reconnect the account and complete any required Meta app review/permission approval before expecting analytics. OAuth scopes must be granted by the social account owner.
+- **Background draft cadence:** The social AI draft workflow is disabled by default and must be enabled by an administrator in **Marketing & SEO**. While the Express dashboard server is running, it checks every minute and, every two days after 10:00 `Asia/Kathmandu`, attempts one draft only when no tracked AI generation job is active, the shared dashboard AI feature/budget is available, a supported connected account returns insight data, and a public in-stock catalog product is available. The workflow uses the last 30 days of measured metrics as context and does not invent performance results.
+- **Review required:** Generated social copy is stored as an unpublished `draft` with a suggested next 10:00 Nepal-time slot. A suggestion is not a schedule. Review the product claims, image, caption, account, and proposed date/time, then explicitly choose publish or confirm a schedule. No post is automatically scheduled or published by this generator. Existing explicit scheduling continues to publish at the confirmed time while the server is running.
+- **AI idle tracking:** The server tracks dashboard reports, social generation, and Tavro Gemini requests. If one is active at the draft check, the worker waits for a later check. The scheduled feature uses the shared AI budget and may not generate if the server is offline, the feature is paused, permission/data is unavailable, or the AI budget is exhausted.
 
 ## Research, skills, security, and deployment
 
@@ -74,8 +82,9 @@ The readable repository at `C:\Windows\System32\harvey` is a Python 3.11+ FastAP
 - Inbox listing, thread context, replies, Gmail/Microsoft OAuth, provider delivery webhooks, unsubscribe pages, and delivery-event synchronization are not implemented because no authorized mailbox integration is configured.
 - Marketing consent is an operator-entered evidence record, not an automatic integration with a storefront consent capture mechanism. Verify applicable privacy and marketing laws and Gemini data-use/retention terms before using real customer context.
 - Daily prospecting is also limited to existing opted-in store accounts; it is not public lead generation and cannot promise customers or conversions. A persistent server process and enabled setting are required for the 08:00 Nepal-time scheduler.
+- Social insights are provider/API-dependent and require renewed OAuth scopes where existing connections did not grant them. Insights are not available for TikTok in the current integration. Scheduled AI social content creates review drafts only and does not guarantee reach, engagement, or sales.
 - Existing dashboard email functionality remains available and is unchanged; it is separate from Tavro's persistent approval workflow. Consider migrating that legacy send screen to this queue in a separately reviewed change.
-- Customer search filters by name, username, email, or exact ID. Order and support history is displayed in the profile, but category-based segmentation and communication-history import are not implemented.
+- Customer browsing/search supports signed-up records and consent-status visibility. Order and support history is displayed in the profile, but category-based segmentation and communication-history import are not implemented.
 - This implementation does not add campaign sending, bulk email, structured/persisted campaign briefs, automated conversion metrics, document uploads, or retrieval-augmented internal knowledge.
 - The repository has a consolidated `schema.sql`, not a versioned migration runner. Tavro's SQL additions are idempotent, but no automated down-migration was added; take a database backup before applying them.
 - Tests added here exercise pure validation and approval-hash behavior. No live Gemini, Supabase, Resend, deployment, mailbox, delivery-webhook, consent-capture, or end-to-end authenticated browser test was run.

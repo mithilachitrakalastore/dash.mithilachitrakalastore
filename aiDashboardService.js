@@ -37,6 +37,12 @@ export const aiDashboardService = {
     getStoreManagement: (token) => request('/admin/ai/store-management', token),
     getMarketingCampaigns: (token) => request('/admin/ai/marketing/campaigns', token),
     getMarketingSocial: (token) => request('/admin/ai/marketing/social', token),
+    getMarketingSocialInsights: (token) => request('/admin/ai/marketing/social/insights', token),
+    getMarketingSocialDraftAutomation: (token) => request('/admin/ai/marketing/social/ai-drafts', token),
+    updateMarketingSocialDraftAutomation: (enabled, token) => request('/admin/ai/marketing/social/ai-drafts', token, {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled }),
+    }),
     generateMarketingSocialContent: (payload, token) => request('/admin/ai/marketing/social/generate-content', token, {
         method: 'POST',
         body: JSON.stringify(payload),
@@ -135,6 +141,7 @@ export const aiDashboardService = {
         body: JSON.stringify({ message }),
     }),
     searchTavroCustomers: (query, token) => request(`/admin/ai/tavro/customers?q=${encodeURIComponent(query)}`, token),
+    listTavroCustomers: (offset, token) => request(`/admin/ai/tavro/customers?offset=${encodeURIComponent(offset)}`, token),
     getTavroCustomer: (customerId, token) => request(`/admin/ai/tavro/customers/${encodeURIComponent(customerId)}`, token),
     saveTavroMarketingPermission: (customerId, payload, token) => request(`/admin/ai/tavro/customers/${encodeURIComponent(customerId)}/marketing-permission`, token, {
         method: 'POST',

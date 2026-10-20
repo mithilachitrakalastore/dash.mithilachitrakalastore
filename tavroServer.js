@@ -1,4 +1,5 @@
 import { Resend } from 'resend';
+import { runTrackedAiJob } from './aiJobTracker.js';
 import {
     createApprovalSnapshot,
     canTransitionEmailDraft,
@@ -30,7 +31,7 @@ const routeError = (res, error, message = 'Unable to complete the Tavro request.
 
 const generateWithGemini = async (genAI, request) => {
     try {
-        return await genAI.models.generateContent(request);
+        return await runTrackedAiJob(() => genAI.models.generateContent(request));
     } catch (error) {
         const statusCode = Number(error?.status || error?.statusCode);
         const providerCode = String(error?.code || '');
@@ -676,31 +677,87 @@ export const registerTavroRoutes = ({ app, supabase, genAI, model, verifyAdminTo
             const admin = await authenticate(req, res);
             if (!admin) return;
             const query = normalizeCustomerSearch(req.query.q);
-            if (query.length < 2) return res.json({ customers: [] });
-            const pattern = `%${query}%`;
-            const searches = [
-                supabase.from('users').select('id, username, name, email, role, status, created_at').ilike('name', pattern).limit(20),
-                supabase.from('users').select('id, username, name, email, role, status, created_at').ilike('username', pattern).limit(20),
-                supabase.from('users').select('id, username, name, email, role, status, created_at').ilike('email', pattern).limit(20),
-                supabase.from('users').select('id, username, name, email, role, status, created_at').eq('id', query).limit(1),
-            ];
-            const results = await Promise.all(searches);
-            const queryError = results.find(({ error }) => error)?.error;
-            if (queryError) throw new Error(`Unable to search customer records: ${queryError.message}`);
-            const customers = new Map();
-            for (const result of results) {
-                for (const customer of result.data || []) {
-                    if (!['admin', 'seller'].includes(customer.role)) customers.set(String(customer.id), customer);
+            const fields = 'id, username, name, email, role, status, email_verified, created_at';
+            let data = [];
+            let hasMore = false;
+            if (query.length >= 2) {
+                const pattern = `%${query}%`;
+                const searches = [
+                    supabase.from('users').select(fields).ilike('name', pattern).limit(25),
+                    supabase.from('users').select(fields).ilike('username', pattern).limit(25),
+                    supabase.from('users').select(fields).ilike('email', pattern).limit(25),
+                    supabase.from('users').select(fields).eq('id', query).limit(1),
+                ];
+                const results = await Promise.all(searches);
+                const queryError = results.find(({ error }) => error)?.error;
+                if (queryError) throw new Error(`Unable to search customer records: ${queryError.message}`);
+                const matches = new Map();
+                for (const result of results) {
+                    for (const customer of result.data || []) {
+                        if (!['admin', 'seller'].includes(String(customer.role).toLowerCase())) {
+                            matches.set(String(customer.id), customer);
+                        }
+                    }
                 }
+                data = [...matches.values()].slice(0, 100);
+            } else {
+                const requestedOffset = Number.parseInt(String(req.query.offset || '0'), 10);
+                const offset = Number.isFinite(requestedOffset) ? Math.max(0, Math.min(100_000, requestedOffset)) : 0;
+                const { data: customers, error } = await supabase.from('users')
+                    .select(fields)
+                    .order('created_at', { ascending: false })
+                    .range(offset, offset + 100);
+                if (error) throw new Error(`Unable to list customer records: ${error.message}`);
+                data = (customers || []).filter((customer) =>
+                    !['admin', 'seller'].includes(String(customer.role).toLowerCase())).slice(0, 100);
+                hasMore = (customers || []).length > 100;
             }
+            const customerIds = data.map(({ id }) => String(id));
+            const emails = data.map(({ email }) => String(email || '').trim().toLowerCase()).filter(Boolean);
+            const [permissionsResult, suppressionsResult] = customerIds.length
+                ? await Promise.all([
+                    supabase.from('email_marketing_permissions')
+                        .select('customer_id, email, consent_status, consent_recorded_at')
+                        .in('customer_id', customerIds),
+                    emails.length
+                        ? supabase.from('email_suppressions').select('email').in('email', emails)
+                        : Promise.resolve({ data: [], error: null }),
+                ])
+                : [{ data: [], error: null }, { data: [], error: null }];
+            if (permissionsResult.error) throw new Error(`Unable to load customer consent status: ${permissionsResult.error.message}`);
+            if (suppressionsResult.error) throw new Error(`Unable to load customer suppression status: ${suppressionsResult.error.message}`);
+            const permissionsByCustomerId = new Map((permissionsResult.data || [])
+                .map((permission) => [String(permission.customer_id), permission]));
+            const suppressedEmails = new Set((suppressionsResult.data || [])
+                .map(({ email }) => String(email).toLowerCase()));
             return res.json({
-                customers: [...customers.values()].slice(0, 20).map((customer) => ({
+                customers: data.map((customer) => {
+                    const email = String(customer.email || '').trim().toLowerCase();
+                    const permission = permissionsByCustomerId.get(String(customer.id));
+                    const consentRecordedAt = new Date(permission?.consent_recorded_at).getTime();
+                    const marketingEligible = Boolean(
+                        customer.status === 'active' &&
+                        customer.email_verified === true &&
+                        email &&
+                        permission?.consent_status === 'granted' &&
+                        permission.email?.toLowerCase() === email &&
+                        Number.isFinite(consentRecordedAt) &&
+                        consentRecordedAt <= Date.now() &&
+                        !suppressedEmails.has(email)
+                    );
+                    return {
                     id: String(customer.id),
                     name: String(customer.name || customer.username || 'Customer'),
-                    email: String(customer.email || ''),
+                    email: customer.email || '',
                     status: String(customer.status || 'unknown'),
+                    emailVerified: customer.email_verified === true,
+                    marketingConsent: permission?.consent_status || 'none',
+                    marketingEligible,
+                    suppressed: Boolean(email && suppressedEmails.has(email)),
                     createdAt: customer.created_at || null,
-                })),
+                    };
+                }),
+                hasMore,
             });
         } catch (error) {
             return routeError(res, error, 'Customer search is unavailable. Confirm the store users table is configured.');
@@ -779,10 +836,16 @@ export const registerTavroRoutes = ({ app, supabase, genAI, model, verifyAdminTo
             }
             if (!genAI) return res.status(503).json({ error: 'The server-side Gemini provider is not configured.' });
             if (!checkRateLimit(admin.id)) return res.status(429).json({ error: 'Too many Tavro requests. Please wait a minute and try again.' });
-            await getAiSettings(supabase);
-            await reserveAiCall(supabase);
             const customer = await loadCustomer(supabase, customerId);
             if (!customer?.email) return res.status(404).json({ error: 'Customer with an email address not found.' });
+            if (purpose === 'marketing') {
+                if (customer.status !== 'active' || customer.email_verified !== true) {
+                    return res.status(403).json({ error: 'Marketing drafts require an active account with a verified email address.' });
+                }
+                await checkMarketingEligibility(supabase, { customerId: customer.id, recipient: customer.email });
+            }
+            await getAiSettings(supabase);
+            await reserveAiCall(supabase);
 
             const response = await generateWithGemini(genAI, {
                 model,
