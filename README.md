@@ -2,6 +2,10 @@
 
 This folder is a separately deployable full-stack application. Its React client talks only to the AI dashboard's authenticated HTTP API. Its separate `server.js` hosts that API and accesses Supabase/Gemini server-side; the store frontend and store `server.js` are not merged with it.
 
+## Tavro
+
+The private, administrator-only Tavro workspace adds persisted AI conversations, structured customer lookup, grounded marketing research, and approval-gated individual Resend drafts. Apply the updated `schema.sql` before deploying these routes. See [TAVRO_IMPLEMENTATION.md](./TAVRO_IMPLEMENTATION.md) for the architecture audit, setup, approval workflow, provider boundaries, and known limitations. No inbox integration or bulk campaign sender is included.
+
 ## Deploy the standalone dashboard and API
 
 1. Review and run `schema.sql` in the Supabase SQL editor. It adds a nullable Google Auth user ID to `public.users` with a unique index (without modifying existing users), adds per-product manual advance-payment settings to `public.products`, creates the dashboard settings/audit tables, support ticket/message tables, administrator-managed marketing campaign plans and automation definitions/run history, and adds an atomic daily/monthly request-budget reservation function.

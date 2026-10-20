@@ -124,4 +124,46 @@ export const aiDashboardService = {
         method: 'PATCH',
         body: JSON.stringify(settings),
     }),
+    getTavroConversations: (token) => request('/admin/ai/tavro/conversations', token),
+    createTavroConversation: (title, token) => request('/admin/ai/tavro/conversations', token, {
+        method: 'POST',
+        body: JSON.stringify({ title }),
+    }),
+    getTavroMessages: (conversationId, token) => request(`/admin/ai/tavro/conversations/${encodeURIComponent(conversationId)}/messages`, token),
+    sendTavroMessage: (conversationId, message, token) => request(`/admin/ai/tavro/conversations/${encodeURIComponent(conversationId)}/messages`, token, {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+    }),
+    searchTavroCustomers: (query, token) => request(`/admin/ai/tavro/customers?q=${encodeURIComponent(query)}`, token),
+    getTavroCustomer: (customerId, token) => request(`/admin/ai/tavro/customers/${encodeURIComponent(customerId)}`, token),
+    saveTavroMarketingPermission: (customerId, payload, token) => request(`/admin/ai/tavro/customers/${encodeURIComponent(customerId)}/marketing-permission`, token, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    }),
+    getTavroEmailDrafts: (token) => request('/admin/ai/tavro/email-drafts', token),
+    generateTavroEmailDraft: (payload, token) => request('/admin/ai/tavro/email-drafts/generate', token, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    }),
+    updateTavroEmailDraft: (draftId, payload, token) => request(`/admin/ai/tavro/email-drafts/${encodeURIComponent(draftId)}`, token, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+    }),
+    approveTavroEmailDraft: (draftId, token) => request(`/admin/ai/tavro/email-drafts/${encodeURIComponent(draftId)}/approve`, token, {
+        method: 'POST',
+        body: JSON.stringify({}),
+    }),
+    sendTavroEmailDraft: (draftId, token) => request(`/admin/ai/tavro/email-drafts/${encodeURIComponent(draftId)}/send`, token, {
+        method: 'POST',
+        body: JSON.stringify({}),
+    }),
+    suppressTavroEmail: (payload, token) => request('/admin/ai/tavro/email-suppressions', token, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    }),
+    researchTavro: (query, token) => request('/admin/ai/tavro/research', token, {
+        method: 'POST',
+        body: JSON.stringify({ query }),
+    }),
+    getTavroUsage: (token) => request('/admin/ai/tavro/usage', token),
 };

@@ -314,3 +314,112 @@ comment on table public.automation_rules is
     'Validated administrator-managed event automation definitions; supported trigger and action types are intentionally allow-listed.';
 comment on table public.automation_runs is
     'Execution history for automations, including bounded event context and explicit delivery failures.';
+
+create table if not exists public.ai_conversations (
+    id uuid primary key default gen_random_uuid(),
+    admin_id text not null references public.users(id) on delete cascade,
+    title text not null default 'New conversation' check (char_length(title) between 1 and 120),
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+create index if not exists ai_conversations_admin_updated_idx
+    on public.ai_conversations (admin_id, updated_at desc);
+
+create table if not exists public.ai_messages (
+    id uuid primary key default gen_random_uuid(),
+    conversation_id uuid not null references public.ai_conversations(id) on delete cascade,
+    role text not null check (role in ('user', 'assistant')),
+    content text not null check (char_length(content) between 1 and 12000),
+    created_at timestamptz not null default now()
+);
+
+create index if not exists ai_messages_conversation_created_idx
+    on public.ai_messages (conversation_id, created_at);
+
+create table if not exists public.email_drafts (
+    id uuid primary key default gen_random_uuid(),
+    admin_id text not null references public.users(id) on delete restrict,
+    customer_id text not null references public.users(id) on delete restrict,
+    recipient text not null check (char_length(recipient) between 3 and 320),
+    subject text not null check (char_length(subject) between 1 and 998),
+    body text not null check (char_length(body) between 1 and 8000),
+    purpose text not null check (purpose in ('support', 'order_update', 'marketing')),
+    provider text not null default 'resend' check (provider in ('resend')),
+    status text not null default 'draft'
+        check (status in ('draft', 'pending_approval', 'approved', 'sending', 'sent', 'failed', 'cancelled')),
+    version integer not null default 1 check (version > 0),
+    approval_snapshot jsonb,
+    approval_hash text,
+    approved_version integer,
+    approved_by text references public.users(id) on delete set null,
+    approved_at timestamptz,
+    provider_message_id text,
+    sent_at timestamptz,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    check (
+        (status not in ('approved', 'sending', 'sent'))
+        or (approval_snapshot is not null and approval_hash is not null and approved_version = version)
+    )
+);
+
+create index if not exists email_drafts_admin_updated_idx
+    on public.email_drafts (admin_id, updated_at desc);
+create index if not exists email_drafts_customer_created_idx
+    on public.email_drafts (customer_id, created_at desc);
+create unique index if not exists email_drafts_provider_message_id_key
+    on public.email_drafts (provider_message_id)
+    where provider_message_id is not null;
+
+create table if not exists public.email_activity (
+    id bigint generated always as identity primary key,
+    draft_id uuid not null references public.email_drafts(id) on delete restrict,
+    admin_id text not null references public.users(id) on delete restrict,
+    recipient text not null check (char_length(recipient) between 3 and 320),
+    purpose text not null check (purpose in ('support', 'order_update', 'marketing')),
+    event_type text not null check (event_type in ('submitted')),
+    provider_message_id text,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists email_activity_draft_created_idx
+    on public.email_activity (draft_id, created_at desc);
+
+create table if not exists public.email_marketing_permissions (
+    customer_id text primary key references public.users(id) on delete cascade,
+    email text not null check (char_length(email) between 3 and 320),
+    consent_status text not null check (consent_status in ('granted', 'revoked')),
+    consent_evidence text not null check (char_length(consent_evidence) between 1 and 300),
+    consent_recorded_at timestamptz not null,
+    updated_by text references public.users(id) on delete set null,
+    updated_at timestamptz not null default now()
+);
+
+create index if not exists email_marketing_permissions_email_idx
+    on public.email_marketing_permissions (email);
+
+create table if not exists public.email_suppressions (
+    email text primary key check (char_length(email) between 3 and 320),
+    reason text not null default 'customer_request' check (char_length(reason) between 1 and 120),
+    recorded_by text references public.users(id) on delete set null,
+    created_at timestamptz not null default now()
+);
+
+alter table public.ai_conversations enable row level security;
+alter table public.ai_messages enable row level security;
+alter table public.email_drafts enable row level security;
+alter table public.email_activity enable row level security;
+alter table public.email_marketing_permissions enable row level security;
+alter table public.email_suppressions enable row level security;
+
+comment on table public.ai_conversations is
+    'Administrator-owned Tavro conversations; API access is verified against the active dashboard session.';
+comment on table public.ai_messages is
+    'Bounded Tavro conversation messages. Retrieved customer content is not stored in this table.';
+comment on table public.email_drafts is
+    'Individual customer email drafts with approval snapshots bound to exact content and version.';
+comment on table public.email_marketing_permissions is
+    'Explicit marketing consent records. Missing or revoked records block Tavro marketing sends.';
+comment on table public.email_suppressions is
+    'Email addresses that must not receive Tavro marketing messages.';

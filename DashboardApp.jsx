@@ -9,6 +9,7 @@ import { aiDashboardService } from './aiDashboardService';
 import { SectionCard } from './pages/shared';
 
 const AICommandCenterPage = lazy(() => import('./pages/AICommandCenterPage').then((module) => ({ default: module.AICommandCenterPage })));
+const TavroPage = lazy(() => import('./pages/TavroPage').then((module) => ({ default: module.TavroPage })));
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage').then((module) => ({ default: module.AnalyticsPage })));
 const AuditLogsPage = lazy(() => import('./pages/AuditLogsPage').then((module) => ({ default: module.AuditLogsPage })));
 const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage').then((module) => ({ default: module.AdminUsersPage })));
@@ -34,6 +35,7 @@ const WishlistsPage = lazy(() => import('./pages/WishlistsPage').then((module) =
 const navGroups = [
     [
         { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+        { id: 'tavro', label: 'Tavro', icon: Sparkles, adminOnly: true, badge: 'New' },
         { id: 'ai-command-center', label: 'AI Command Center', icon: Sparkles, badge: 'New' },
     ],
     [
@@ -264,6 +266,10 @@ export const DashboardApp = ({ currentUser, onSignOut }) => {
         switch (route) {
             case 'dashboard':
                 return <DashboardPage {...sharedPageProps} />;
+            case 'tavro':
+                return currentUser.role === 'admin'
+                    ? <TavroPage token={currentUser.emailAdminToken} enabled={settings.enabled} providerConfigured={overview.providerConfigured} />
+                    : <FeaturePlaceholderPage title="Administrator access required" description="Only active store administrators can use Tavro." goTo={goTo} />;
             case 'ai-command-center':
                 return <AICommandCenterPage enabled={settings.enabled} providerConfigured={overview.providerConfigured} onRunCommand={runCommand} submitting={submitting} />;
             case 'products':

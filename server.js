@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { registerAIDashboardRoutes } from './aiDashboardServer.js';
+import { registerTavroRoutes } from './tavroServer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -146,6 +147,14 @@ registerAIDashboardRoutes({
     createGoogleLinkGrant,
     verifyGoogleLinkGrant,
     cloudinary,
+});
+
+registerTavroRoutes({
+    app,
+    supabase,
+    genAI,
+    model: geminiModel,
+    verifyAdminToken,
 });
 
 const distPath = path.join(__dirname, 'dist');
