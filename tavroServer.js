@@ -839,8 +839,15 @@ export const registerTavroRoutes = ({ app, supabase, genAI, model, verifyAdminTo
             const customer = await loadCustomer(supabase, customerId);
             if (!customer?.email) return res.status(404).json({ error: 'Customer with an email address not found.' });
             if (purpose === 'marketing') {
-                if (customer.status !== 'active' || customer.email_verified !== true) {
-                    return res.status(403).json({ error: 'Marketing drafts require an active account with a verified email address.' });
+                if (customer.status !== 'active') {
+                    return res.status(403).json({
+                        error: `Marketing drafts require an active customer account. Selected customer ${customer.id} has status ${JSON.stringify(customer.status)}.`,
+                    });
+                }
+                if (customer.email_verified !== true) {
+                    return res.status(403).json({
+                        error: `Marketing drafts require a verified customer email. Selected customer ${customer.id} has email_verified=${JSON.stringify(customer.email_verified)}; it must be boolean true.`,
+                    });
                 }
                 await checkMarketingEligibility(supabase, { customerId: customer.id, recipient: customer.email });
             }
@@ -1043,8 +1050,13 @@ export const registerTavroRoutes = ({ app, supabase, genAI, model, verifyAdminTo
             const validation = validateCustomerEmailDraft(draft);
             if (validation.error) return res.status(400).json({ error: validation.error });
             if (draft.purpose === 'marketing') {
-                if (customer.status !== 'active' || customer.email_verified !== true) {
-                    const blocked = new Error('Marketing email requires an active account with a verified email address.');
+                if (customer.status !== 'active') {
+                    const blocked = new Error(`Marketing email requires an active customer account. Selected customer ${customer.id} has status ${JSON.stringify(customer.status)}.`);
+                    blocked.status = 403;
+                    throw blocked;
+                }
+                if (customer.email_verified !== true) {
+                    const blocked = new Error(`Marketing email requires a verified customer email. Selected customer ${customer.id} has email_verified=${JSON.stringify(customer.email_verified)}; it must be boolean true.`);
                     blocked.status = 403;
                     throw blocked;
                 }
