@@ -198,7 +198,10 @@ export const MarketingSocialPanel = ({ token, products = [] }) => {
                 : 'AI drafted post copy, but current trend sources were unavailable. Review all claims before publishing.');
         } catch (generationError) {
             setCaption(fallbackProductCaption(selectedProduct));
-            setNotice('AI content generation is unavailable right now, so we drafted an editable caption for your selected product. Review it before publishing and try AI again later.');
+            const reason = generationError instanceof Error && generationError.message
+                ? generationError.message
+                : 'An unexpected server error occurred.';
+            setError(`AI caption generation failed: ${reason} An editable caption was added for your selected product; review it before publishing.`);
         } finally {
             setBusy('');
         }

@@ -1055,12 +1055,20 @@ export const registerAIDashboardRoutes = ({
             return { available: false, message: 'TikTok insights are not available through the connected API permissions.' };
         }
         if (account.platform === 'facebook' && !scopes.has('read_insights')) {
-            return { available: false, message: 'Reconnect this Page and grant Meta read_insights permission to view reach and engagement.' };
+            return {
+                available: false,
+                requiresReconnect: true,
+                message: 'Meta has not granted read_insights to this connection. Reconnect and approve the permission; if it is still missing, enable read_insights in Meta App Review.',
+            };
         }
         const isInstagramLogin = account.platform === 'instagram' && account.metadata?.authMethod === 'instagram_login';
         if (account.platform === 'instagram' &&
             !(scopes.has('instagram_business_manage_insights') || scopes.has('instagram_manage_insights') || scopes.has('read_insights'))) {
-            return { available: false, message: 'Reconnect this Instagram account and grant Instagram insights permission to view reach and engagement.' };
+            return {
+                available: false,
+                requiresReconnect: true,
+                message: 'Instagram insights permission has not been granted to this connection. Reconnect the account and approve the permission.',
+            };
         }
 
         const instagramMetrics = 'reach,accounts_engaged,profile_views';
@@ -1205,11 +1213,12 @@ export const registerAIDashboardRoutes = ({
                             platform: account.platform,
                             accountName: account.account_name,
                             available: false,
+                            requiresReconnect: account.platform === 'facebook' || account.platform === 'instagram',
                             message: account.platform === 'tiktok'
                                 ? 'TikTok insights are not available through the connected API permissions.'
                                 : account.platform === 'facebook'
-                                    ? 'Reconnect this Page and grant Meta read_insights permission to view reach and engagement.'
-                                    : 'Reconnect this Instagram account and grant Instagram insights permission to view reach and engagement.',
+                                    ? 'Meta has not granted read_insights to this connection. Reconnect and approve the permission; if it is still missing, enable read_insights in Meta App Review.'
+                                    : 'Instagram insights permission has not been granted to this connection. Reconnect the account and approve the permission.',
                         });
                         continue;
                     }
@@ -1318,6 +1327,7 @@ export const registerAIDashboardRoutes = ({
                     url.searchParams.set('response_type', 'code');
                     url.searchParams.set('state', state);
                     url.searchParams.set('scope', 'pages_show_list,pages_read_engagement,pages_manage_posts,read_insights,instagram_manage_insights');
+                    url.searchParams.set('auth_type', 'rerequest');
                     return url.toString();
                 })()
                 : provider === 'instagram'
@@ -1384,6 +1394,14 @@ export const registerAIDashboardRoutes = ({
                     fb_exchange_token: shortToken.access_token,
                 });
                 const longToken = await parseSocialResponse(await fetch(`https://graph.facebook.com/${metaGraphVersion}/oauth/access_token?${longTokenQuery}`), 'Meta token exchange');
+                const permissionsUrl = new URL(`https://graph.facebook.com/${metaGraphVersion}/me/permissions`);
+                permissionsUrl.searchParams.set('access_token', longToken.access_token);
+                const permissions = await parseSocialResponse(await fetch(permissionsUrl), 'Meta granted permissions');
+                const grantedScopes = Array.isArray(permissions.data)
+                    ? permissions.data
+                        .filter((permission) => permission.status === 'granted' && typeof permission.permission === 'string')
+                        .map((permission) => permission.permission)
+                    : [];
                 const pageUrl = new URL(`https://graph.facebook.com/${metaGraphVersion}/me/accounts`);
                 pageUrl.searchParams.set('fields', 'id,name,access_token,instagram_business_account{id,username}');
                 pageUrl.searchParams.set('access_token', longToken.access_token);
@@ -1397,7 +1415,7 @@ export const registerAIDashboardRoutes = ({
                         accountName: page.name || 'Facebook Page',
                         accessToken: page.access_token,
                         expiresIn: null,
-                        scopes: String(shortToken.granted_scopes || '').split(',').filter(Boolean),
+                        scopes: grantedScopes,
                         metadata: { pageId: page.id },
                         adminId: stateAdminId,
                     });
@@ -1408,7 +1426,7 @@ export const registerAIDashboardRoutes = ({
                             accountName: page.instagram_business_account.username || page.name || 'Instagram account',
                             accessToken: page.access_token,
                             expiresIn: null,
-                            scopes: String(shortToken.granted_scopes || '').split(',').filter(Boolean),
+                            scopes: grantedScopes,
                             metadata: { pageId: page.id, pageName: page.name || '', authMethod: 'facebook_login' },
                             adminId: stateAdminId,
                         });
