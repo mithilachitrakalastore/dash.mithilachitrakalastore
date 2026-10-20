@@ -1072,7 +1072,7 @@ export const registerAIDashboardRoutes = ({
         }
 
         const instagramMetrics = 'reach,accounts_engaged,profile_views';
-        const facebookMetrics = 'page_impressions_unique,page_engaged_users';
+        const facebookMetrics = 'page_total_media_view_unique,page_post_engagements';
         const host = isInstagramLogin ? 'https://graph.instagram.com' : 'https://graph.facebook.com';
         const insightsUrl = new URL(`${host}/${metaGraphVersion}/${encodeURIComponent(account.external_account_id)}/insights`);
         insightsUrl.searchParams.set('metric', account.platform === 'instagram' ? instagramMetrics : facebookMetrics);
@@ -1099,8 +1099,8 @@ export const registerAIDashboardRoutes = ({
                     profileViews: metrics.get('profile_views') ?? null,
                 }
                 : {
-                    reach: metrics.get('page_impressions_unique') ?? null,
-                    engagement: metrics.get('page_engaged_users') ?? null,
+                    reach: metrics.get('page_total_media_view_unique') ?? null,
+                    engagement: metrics.get('page_post_engagements') ?? null,
                     profileViews: null,
                 },
             fetchedAt: new Date().toISOString(),
