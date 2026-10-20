@@ -2,13 +2,13 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
-import { GoogleGenAI } from '@google/genai';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { registerAIDashboardRoutes } from './aiDashboardServer.js';
 import { registerTavroRoutes } from './tavroServer.js';
+import { createAIProvider } from './aiProvider.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,8 +25,15 @@ const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY ||
     (!isProduction ? process.env.VITE_SUPABASE_SERVICE_ROLE_KEY : '');
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 const tokenSecret = process.env.ADMIN_EMAIL_TOKEN_SECRET || supabaseKey || '';
-const geminiApiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const aiProviderName = String(process.env.AI_PROVIDER || 'gemini').trim().toLowerCase();
+const aiProviderApiKey = aiProviderName === 'freellmapi'
+    ? process.env.FREELLM_API_KEY
+    : process.env.GEMINI_API_KEY || (!isProduction ? process.env.VITE_GEMINI_API_KEY : '');
+const aiProviderModel = aiProviderName === 'freellmapi'
+    ? process.env.FREELLM_MODEL || 'auto'
+    : process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const freeLlmBaseUrl = process.env.FREELLM_BASE_URL || 'http://127.0.0.1:31415/v1';
+const aiProviderTimeoutMs = Number(process.env.AI_PROVIDER_TIMEOUT_MS) || 60_000;
 const cloudinary = {
     apiKey: process.env.CLOUDINARY_API_KEY || '',
     apiSecret: process.env.CLOUDINARY_API_SECRET || '',
@@ -53,14 +60,29 @@ if (!tokenSecret) {
     process.exit(1);
 }
 
+let aiProvider;
+let tavroAiProvider;
+try {
+    aiProvider = createAIProvider({
+        provider: aiProviderName,
+        apiKey: aiProviderApiKey,
+        model: aiProviderModel,
+        baseUrl: freeLlmBaseUrl,
+        timeoutMs: aiProviderTimeoutMs,
+    });
+    tavroAiProvider = createAIProvider({
+        provider: aiProviderName,
+        apiKey: aiProviderApiKey,
+        model: aiProviderModel,
+        baseUrl: freeLlmBaseUrl,
+        timeoutMs: Number(process.env.TAVRO_AI_TIMEOUT_MS) || 30_000,
+    });
+} catch (error) {
+    console.error(error.message);
+    process.exit(1);
+}
+
 const supabase = createClient(supabaseUrl, supabaseKey);
-const genAI = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
-const tavroGenAI = geminiApiKey
-    ? new GoogleGenAI({
-        apiKey: geminiApiKey,
-        httpOptions: { timeout: 30_000, retryOptions: { attempts: 1 } },
-    })
-    : null;
 
 const hashPassword = (password) => Buffer.from(`mcs-salt-${password}`).toString('base64');
 
@@ -144,8 +166,10 @@ app.get('/api/health', (_req, res) => {
 registerAIDashboardRoutes({
     app,
     supabase,
-    genAI,
-    model: geminiModel,
+    genAI: aiProvider.client,
+    model: aiProvider.model,
+    supportsWebSearch: aiProvider.supportsWebSearch,
+    providerName: aiProviderName === 'freellmapi' ? 'FreeLLMAPI' : 'Gemini',
     verifyAdminToken,
     tokenSecret,
     hashPassword,
@@ -158,8 +182,10 @@ registerAIDashboardRoutes({
 registerTavroRoutes({
     app,
     supabase,
-    genAI: tavroGenAI,
-    model: geminiModel,
+    genAI: tavroAiProvider.client,
+    model: tavroAiProvider.model,
+    providerName: aiProviderName === 'freellmapi' ? 'FreeLLMAPI' : 'Gemini',
+    supportsWebSearch: tavroAiProvider.supportsWebSearch,
     verifyAdminToken,
 });
 

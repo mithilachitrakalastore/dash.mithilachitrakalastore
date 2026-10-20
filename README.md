@@ -1,6 +1,6 @@
 # AI Dashbord
 
-This folder is a separately deployable full-stack application. Its React client talks only to the AI dashboard's authenticated HTTP API. Its separate `server.js` hosts that API and accesses Supabase/Gemini server-side; the store frontend and store `server.js` are not merged with it.
+This folder is a separately deployable full-stack application. Its React client talks only to the AI dashboard's authenticated HTTP API. Its separate `server.js` hosts that API and accesses Supabase and the selected AI provider server-side; the store frontend and store `server.js` are not merged with it.
 
 ## Tavro
 
@@ -10,7 +10,7 @@ The private, administrator-only Tavro workspace adds persisted AI conversations,
 
 1. Review and run `schema.sql` in the Supabase SQL editor. It adds a nullable Google Auth user ID to `public.users` with a unique index (without modifying existing users), adds per-product manual advance-payment settings to `public.products`, creates the dashboard settings/audit tables, support ticket/message tables, administrator-managed marketing campaign plans and automation definitions/run history, and adds an atomic daily/monthly request-budget reservation function.
 2. Create a Node web service from the `AI_Dashbord` folder. Set the build command to `npm install && npm run build` and the start command to `npm start`. The service uses the host-provided `PORT`.
-3. Set these server environment variables on that service: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `GEMINI_API_KEY`, `RESEND_API_KEY`, `ADMIN_EMAIL_TOKEN_SECRET`, and, for product image uploads, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`. Set `AI_DASHBOARD_ORIGINS` only for cross-origin frontend hosting. The anon key is public, but the dashboard loads it from its API config endpoint rather than embedding it in the frontend build. Do not set secrets as `VITE_*` variables. Optional `EMAIL_HELLO`, `EMAIL_ORDERS`, `EMAIL_SUPPORT`, and `EMAIL_SECURITY` values override the corresponding verified sender addresses. Social publishing additionally needs the social-platform app credentials and token-encryption key described below.
+3. Set `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `RESEND_API_KEY`, and `ADMIN_EMAIL_TOKEN_SECRET`. Choose one server-side AI provider: the default Gemini provider uses `GEMINI_API_KEY` and optional `GEMINI_MODEL`, while FreeLLMAPI uses `AI_PROVIDER=freellmapi`, `FREELLM_API_KEY`, and optional `FREELLM_BASE_URL`/`FREELLM_MODEL`. Never set AI secrets as `VITE_*` variables. For product image uploads, also set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`. Set `AI_DASHBOARD_ORIGINS` only for cross-origin frontend hosting. The anon key is public, but the dashboard loads it from its API config endpoint rather than embedding it in the frontend build. Optional `EMAIL_HELLO`, `EMAIL_ORDERS`, `EMAIL_SUPPORT`, and `EMAIL_SECURITY` values override the corresponding verified sender addresses. Social publishing additionally needs the social-platform app credentials and token-encryption key described below.
 4. For a single service serving both the app and API, leave `VITE_API_BASE_URL=/api`. If you host the frontend separately, set its build-time `VITE_API_BASE_URL` to the AI API service origin plus `/api`, and configure `AI_DASHBOARD_ORIGINS` on the API server to the exact frontend HTTPS origin.
 5. Sign in with Google or an existing active, verified store seller or administrator username/email and password. Sellers have the same dashboard and settings permissions as administrators. Google must be enabled as an OAuth provider in the same Supabase project used by the storefront. Add the dashboard's deployed origin (for example `https://admin.example.com`) to Supabase Auth's allowed redirect URLs. For an account whose Google email does not match its store email, enter the existing account credentials and choose **Link Google to this store account**. The API verifies the password and issues a five-minute signed grant; after Google verifies the identity, the API links that Supabase Auth user ID to the existing store account. Google sign-in cannot create or promote accounts, or activate inactive/unverified sellers or administrators. The API validates the Supabase access token before issuing a 12-hour dashboard token. The signed dashboard session is stored in tab-scoped session storage, re-verified with the API after a page reload, and cleared when the tab closes or the user signs out.
 
@@ -20,7 +20,9 @@ The dashboard fails closed if the additive schema is missing, administrator veri
 
 Run `npm install` and `npm run dev` from this folder. The API server loads `AI_Dashbord/.env` first and, only outside production, falls back to the repository root `.env` for the existing local Supabase/Gemini configuration. Put any AI-dashboard-specific overrides in `AI_Dashbord/.env`; do not commit either `.env` file. Vite runs at `http://127.0.0.1:3000` and proxies `/api` to the standalone API on port `4173`. If the API server was already running before adding an endpoint, stop and restart it so it registers the updated routes. Add `http://127.0.0.1:3000` to Supabase Auth's allowed redirect URLs for local Google sign-in.
 
-If AI caption generation reports a Gemini quota error (HTTP 429 / `RESOURCE_EXHAUSTED`), check quota and billing for the Google AI project associated with the server's `GEMINI_API_KEY`, or configure a valid key with available quota and restart the server. A configured key can still have no usable quota. Keep API keys server-side; do not put secrets in `VITE_*` variables.
+For local FreeLLMAPI use, set `AI_PROVIDER=freellmapi`, `FREELLM_API_KEY`, and (for the desktop API shown in the FreeLLMAPI app) `FREELLM_BASE_URL=http://127.0.0.1:31415/v1`. `FREELLM_MODEL` defaults to `auto`. The API server must be running on the same machine as that local FreeLLMAPI endpoint; a remote deployment cannot reach your computer's `127.0.0.1`. On a hosted server, use a FreeLLMAPI base URL reachable from that server. FreeLLMAPI provides OpenAI-compatible chat completions; Gemini Google Search grounding is unavailable when FreeLLMAPI is selected, so Tavro and social drafts will not claim live web research. Switch back with `AI_PROVIDER=gemini` and the existing `GEMINI_API_KEY`/`GEMINI_MODEL`.
+
+If Gemini generation reports a quota error (HTTP 429 / `RESOURCE_EXHAUSTED`), check quota and billing for the Google AI project associated with the server's `GEMINI_API_KEY`, or configure a valid key with available quota and restart the server. Keep API keys server-side; do not put secrets in `VITE_*` variables.
 
 ### Render deployment values
 
@@ -33,7 +35,12 @@ Add these environment variables to the Render service:
 | `SUPABASE_URL` | The existing Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | The existing service-role key (secret; server only) |
 | `SUPABASE_ANON_KEY` | The project's public anon key, used to initialize Google OAuth |
-| `GEMINI_API_KEY` | The existing Gemini API key (secret; server only) |
+| `AI_PROVIDER` | Optional; `gemini` (default) or `freellmapi` |
+| `GEMINI_API_KEY` | Gemini API key (secret; server only; required when `AI_PROVIDER=gemini`) |
+| `FREELLM_API_KEY` | FreeLLMAPI unified API key (secret; server only; required when `AI_PROVIDER=freellmapi`) |
+| `FREELLM_BASE_URL` | FreeLLMAPI OpenAI-compatible base URL reachable from the server, such as `http://127.0.0.1:31415/v1` for local development |
+| `FREELLM_MODEL` | Optional FreeLLMAPI model/router choice; defaults to `auto` |
+| `AI_PROVIDER_TIMEOUT_MS` | Optional provider request timeout in milliseconds; defaults to `60000` |
 | `RESEND_API_KEY` | Resend API key for administrator email sending (secret; server only) |
 | `ADMIN_EMAIL_TOKEN_SECRET` | A newly generated, private random signing secret |
 | `GEMINI_MODEL` | `gemini-3.8-flash` (or another text-generation model enabled for your Gemini account) |

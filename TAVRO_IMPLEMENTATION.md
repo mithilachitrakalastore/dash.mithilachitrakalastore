@@ -9,7 +9,7 @@
 - **Existing AI:** The official `@google/genai` SDK is already installed and used server-side. `ai_dashboard_settings` provides a global pause and atomic daily/monthly request budgets. Existing AI reporting avoids sending customer PII.
 - **Email:** Resend is already used by the dashboard for sending and templates. No Gmail/Microsoft OAuth mailbox integration was found; Resend sending does not provide an inbox. Tavro therefore implements sending only and does not claim inbox access.
 - **Deployment:** The existing README describes one same-origin Render service that builds the Vite frontend and runs the Express API. Existing server configuration and environment-variable names were inspected without reading or printing secret values.
-- **Configuration names present:** `GEMINI_API_KEY`, `GEMINI_MODEL`, `RESEND_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, and dashboard/session settings are already part of this project. Do not place secrets in `VITE_*` variables.
+- **AI provider configuration:** Gemini remains the default (`AI_PROVIDER=gemini`, `GEMINI_API_KEY`, `GEMINI_MODEL`). The server also supports FreeLLMAPI's OpenAI-compatible chat-completions endpoint (`AI_PROVIDER=freellmapi`, `FREELLM_API_KEY`, `FREELLM_BASE_URL`, `FREELLM_MODEL`). Keep all provider keys server-side; never use `VITE_*` variables for secrets.
 
 ## Harvey repository assessment
 
@@ -39,7 +39,7 @@ The readable repository at `C:\Windows\System32\harvey` is a Python 3.11+ FastAP
 ## Apply schema and run locally
 
 1. Back up the Supabase database and apply the complete, idempotent `schema.sql` in the Supabase SQL editor. It includes the existing dashboard schema and the additive Tavro tables. The API fails with a setup message if required tables are absent.
-2. Configure the existing server-side `GEMINI_API_KEY`, `GEMINI_MODEL`, `RESEND_API_KEY`, Supabase credentials, and admin session secret in the dashboard service environment. Do not add real credentials to source files or frontend build variables. `AI_MAX_OUTPUT_TOKENS` is optional and is clamped by the server.
+2. Configure one AI provider in the server environment: Gemini (`AI_PROVIDER=gemini`, `GEMINI_API_KEY`, `GEMINI_MODEL`) or FreeLLMAPI (`AI_PROVIDER=freellmapi`, `FREELLM_API_KEY`, `FREELLM_BASE_URL`, `FREELLM_MODEL`). Also configure `RESEND_API_KEY`, Supabase credentials, and the admin session secret. Do not add real credentials to source files or frontend build variables. `AI_MAX_OUTPUT_TOKENS` is optional and is clamped by the server.
 3. Run `npm install` only if the existing dependency install is missing, then `npm run dev` for local development. Existing scripts run the Express API on port 4173 and Vite on port 3000.
 4. Run `npm test` for the isolated Tavro validation tests and `npm run build` for the production frontend build.
 
@@ -47,7 +47,7 @@ The readable repository at `C:\Windows\System32\harvey` is a Python 3.11+ FastAP
 
 1. Sign in as an active administrator and open **Tavro → Customers**.
 2. Browse signed-up customer accounts or search by name, email, username, or exact customer ID. Each record shows email verification, marketing consent, suppression, and eligibility status.
-3. In **Email Studio**, select a support, order-update, or marketing purpose and tone, then generate a draft. Gemini receives a minimized context, and the generated draft is never sent automatically.
+3. In **Email Studio**, select a support, order-update, or marketing purpose and tone, then generate a draft. The selected provider receives a minimized context, and the generated draft is never sent automatically.
 4. Review the full recipient, subject, and message. Save edits before approval. Any saved edit invalidates the prior approval.
 5. Marketing drafts and sends require an active account, verified email, documented explicit opt-in for the current address, and no suppression. A support/order message does not become a marketing message merely because the text is promotional; choose the truthful purpose.
 6. Approve the saved exact content, then separately choose **Send approved email** and confirm the full message. Check Resend activity if delivery is uncertain. A draft whose provider outcome is uncertain remains locked to prevent a duplicate send.
@@ -58,7 +58,7 @@ The readable repository at `C:\Windows\System32\harvey` is a Python 3.11+ FastAP
 - **Daily target:** The workflow selects up to 10 eligible accounts per Nepal-local calendar day. This is a prospect/draft target, not a guarantee of 10 eligible contacts, new customers, purchases, or conversions.
 - **Schedule and enablement:** The workflow is disabled by default. An active administrator must enable it in **Tavro → Daily Prospects**. While the persistent Express dashboard server is running, it checks every minute and starts the day's run at or after 08:00 `Asia/Kathmandu`. The database's unique run date prevents duplicate runs across server instances. A hard process termination can leave that day's run in `running`; inspect the run record before attempting manual database recovery.
 - **Drafts, never autonomous sends:** Tavro generates an individual `draft` for each eligible account using Gemini and the public catalog. Every draft requires the administrator to review, approve, and separately confirm sending. Resend is not required to generate drafts, but must be configured for sending. Disabling the workflow pauses future scheduled/manual runs; it does not delete drafts already created.
-- **Prerequisites:** Back up and apply the updated `schema.sql`; record genuine opt-in evidence through Tavro; configure the server-side Gemini key/model; and enable the feature from the admin UI. Runs consume the existing shared dashboard AI budget and may stop when that budget is exhausted. No email is sent if consent is missing, revoked, stale for a different address, future-dated, or suppressed.
+- **Prerequisites:** Back up and apply the updated `schema.sql`; record genuine opt-in evidence through Tavro; configure a server-side AI provider; and enable the feature from the admin UI. Runs consume the existing shared dashboard AI budget and may stop when that budget is exhausted. No email is sent if consent is missing, revoked, stale for a different address, future-dated, or suppressed.
 - **Opt-out handling:** The generated draft provides the store's unsubscribe contact address, but inbound unsubscribe replies are not automatically processed because Tavro has no inbox integration. An administrator must record a revocation or suppression before any later send. Do not enable marketing without an operational process for handling opt-outs and applicable privacy/marketing-law review.
 
 ## Social performance and AI post drafts
@@ -75,12 +75,12 @@ The readable repository at `C:\Windows\System32\harvey` is a Python 3.11+ FastAP
 - Skill definitions and tool availability are in `tavroService.js`. New capabilities must have narrow input/output contracts, active-admin permission checks, bounded execution, and backend validation. Customer/email content is untrusted context, never an instruction source.
 - The default dashboard deployment procedure, build/start commands, and Render guidance remain in `README.md`. Apply the same schema and set the same server-only environment variables on the deployment service; HTTPS, Supabase Auth redirect URLs, CORS origins, backups, and provider account limits remain operator responsibilities.
 - RLS is enabled on Tavro tables; API routes use the existing server-only service client and enforce administrator session ownership before reads/writes. Generated content and chat history are rendered as escaped React text. Resend deliveries are individual messages, never a bulk campaign.
-- The API uses one server-configured Gemini model (`GEMINI_MODEL`), with a 30-second request timeout, one provider attempt, and bounded output tokens; model selection is not exposed in the UI.
+- The API uses one server-configured AI provider and model, with bounded output tokens; model selection is not exposed in the UI. Gemini supports Google Search grounding. FreeLLMAPI uses OpenAI-compatible chat completions and does not support Gemini grounding; research and social content must not claim to use live web search while it is selected.
 
 ## Limitations and follow-up work
 
 - Inbox listing, thread context, replies, Gmail/Microsoft OAuth, provider delivery webhooks, unsubscribe pages, and delivery-event synchronization are not implemented because no authorized mailbox integration is configured.
-- Marketing consent is an operator-entered evidence record, not an automatic integration with a storefront consent capture mechanism. Verify applicable privacy and marketing laws and Gemini data-use/retention terms before using real customer context.
+- Marketing consent is an operator-entered evidence record, not an automatic integration with a storefront consent capture mechanism. Verify applicable privacy and marketing laws and the selected AI provider's data-use/retention terms before using real customer context.
 - Daily prospecting is also limited to existing opted-in store accounts; it is not public lead generation and cannot promise customers or conversions. A persistent server process and enabled setting are required for the 08:00 Nepal-time scheduler.
 - Social insights are provider/API-dependent and require renewed OAuth scopes where existing connections did not grant them. Insights are not available for TikTok in the current integration. Scheduled AI social content creates review drafts only and does not guarantee reach, engagement, or sales.
 - Existing dashboard email functionality remains available and is unchanged; it is separate from Tavro's persistent approval workflow. Consider migrating that legacy send screen to this queue in a separately reviewed change.

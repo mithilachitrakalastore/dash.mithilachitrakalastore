@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "build": "vite build",
-    "test": "node --test tavroService.test.js",
+    "test": "node --test tavroService.test.js aiProvider.test.js",
     "preview": "vite preview",
     "dev": "concurrently \"node server.js\" \"vite --host\""
   },

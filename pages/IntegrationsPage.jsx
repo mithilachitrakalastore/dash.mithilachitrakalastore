@@ -3,7 +3,7 @@ import { Activity, Cloud, Database, Mail, RefreshCw, Sparkles } from 'lucide-rea
 import { aiDashboardService } from '../aiDashboardService';
 import { PageHeading, SectionCard } from './shared';
 
-const providerIcons = { supabase: Database, gemini: Sparkles, resend: Mail, cloudinary: Cloud };
+const providerIcons = { supabase: Database, gemini: Sparkles, 'ai-provider': Sparkles, resend: Mail, cloudinary: Cloud };
 
 const statusStyle = {
     connected: 'bg-emerald-100 text-emerald-800',
