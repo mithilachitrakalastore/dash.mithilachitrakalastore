@@ -406,12 +406,60 @@ create table if not exists public.email_suppressions (
     created_at timestamptz not null default now()
 );
 
+create table if not exists public.tavro_prospecting_settings (
+    id integer primary key check (id = 1),
+    enabled boolean not null default false,
+    daily_target integer not null default 10 check (daily_target between 1 and 10),
+    updated_by text references public.users(id) on delete set null,
+    updated_at timestamptz not null default now()
+);
+
+insert into public.tavro_prospecting_settings (id)
+values (1)
+on conflict (id) do nothing;
+
+create table if not exists public.tavro_daily_prospect_runs (
+    id uuid primary key default gen_random_uuid(),
+    run_date date not null unique,
+    status text not null check (status in ('running', 'completed', 'failed')),
+    started_by text references public.users(id) on delete set null,
+    started_at timestamptz not null default now(),
+    completed_at timestamptz,
+    qualified_count integer not null default 0 check (qualified_count between 0 and 10),
+    drafted_count integer not null default 0 check (drafted_count between 0 and 10),
+    error_summary text
+);
+
+create index if not exists tavro_daily_prospect_runs_started_idx
+    on public.tavro_daily_prospect_runs (started_at desc);
+
+create table if not exists public.tavro_daily_prospects (
+    id uuid primary key default gen_random_uuid(),
+    run_id uuid not null references public.tavro_daily_prospect_runs(id) on delete cascade,
+    customer_id text not null references public.users(id) on delete cascade,
+    email_draft_id uuid references public.email_drafts(id) on delete set null,
+    status text not null check (status in ('drafted', 'skipped', 'failed')),
+    reason text,
+    created_at timestamptz not null default now(),
+    unique (run_id, customer_id)
+);
+
+create index if not exists tavro_daily_prospects_run_created_idx
+    on public.tavro_daily_prospects (run_id, created_at);
+
+create unique index if not exists tavro_daily_prospects_draft_key
+    on public.tavro_daily_prospects (email_draft_id)
+    where email_draft_id is not null;
+
 alter table public.ai_conversations enable row level security;
 alter table public.ai_messages enable row level security;
 alter table public.email_drafts enable row level security;
 alter table public.email_activity enable row level security;
 alter table public.email_marketing_permissions enable row level security;
 alter table public.email_suppressions enable row level security;
+alter table public.tavro_prospecting_settings enable row level security;
+alter table public.tavro_daily_prospect_runs enable row level security;
+alter table public.tavro_daily_prospects enable row level security;
 
 comment on table public.ai_conversations is
     'Administrator-owned Tavro conversations; API access is verified against the active dashboard session.';
@@ -423,3 +471,9 @@ comment on table public.email_marketing_permissions is
     'Explicit marketing consent records. Missing or revoked records block Tavro marketing sends.';
 comment on table public.email_suppressions is
     'Email addresses that must not receive Tavro marketing messages.';
+comment on table public.tavro_prospecting_settings is
+    'Explicitly enabled daily Tavro prospect discovery settings; email sending always remains per-message approval gated.';
+comment on table public.tavro_daily_prospect_runs is
+    'Idempotent daily discovery runs for up to ten opted-in, non-customer prospect records.';
+comment on table public.tavro_daily_prospects is
+    'Per-run qualified prospect and generated draft references, without duplicated customer profile data.';

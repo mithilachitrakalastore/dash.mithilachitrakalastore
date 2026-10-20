@@ -52,18 +52,38 @@ The readable repository at `C:\Windows\System32\harvey` is a Python 3.11+ FastAP
 5. Marketing requires a documented explicit opt-in date/evidence and has a suppression check. A support/order message does not become a marketing message merely because the text is promotional; choose the truthful purpose.
 6. Approve the saved exact content, then separately choose **Send approved email** and confirm the full message. Check Resend activity if delivery is uncertain. A draft whose provider outcome is uncertain remains locked to prevent a duplicate send.
 
+## Daily opted-in prospect workflow
+
+- **Scope:** Tavro considers only existing, active, email-verified customer accounts with a recorded `granted` marketing permission for that exact customer ID and current email address. It excludes staff, anyone with an order, suppressed addresses, and customers with any marketing draft in the prior 30 days. It does not scrape public websites or discover people who are not already in the store account database.
+- **Daily target:** The workflow selects up to 10 eligible accounts per Nepal-local calendar day. This is a prospect/draft target, not a guarantee of 10 eligible contacts, new customers, purchases, or conversions.
+- **Schedule and enablement:** The workflow is disabled by default. An active administrator must enable it in **Tavro → Daily Prospects**. While the persistent Express dashboard server is running, it checks every minute and starts the day's run at or after 08:00 `Asia/Kathmandu`. The database's unique run date prevents duplicate runs across server instances. A hard process termination can leave that day's run in `running`; inspect the run record before attempting manual database recovery.
+- **Drafts, never autonomous sends:** Tavro generates an individual `draft` for each eligible account using Gemini and the public catalog. Every draft requires the administrator to review, approve, and separately confirm sending. Resend is not required to generate drafts, but must be configured for sending. Disabling the workflow pauses future scheduled/manual runs; it does not delete drafts already created.
+- **Prerequisites:** Back up and apply the updated `schema.sql`; record genuine opt-in evidence through Tavro; configure the server-side Gemini key/model; and enable the feature from the admin UI. Runs consume the existing shared dashboard AI budget and may stop when that budget is exhausted. No email is sent if consent is missing, revoked, stale for a different address, future-dated, or suppressed.
+- **Opt-out handling:** The generated draft provides the store's unsubscribe contact address, but inbound unsubscribe replies are not automatically processed because Tavro has no inbox integration. An administrator must record a revocation or suppression before any later send. Do not enable marketing without an operational process for handling opt-outs and applicable privacy/marketing-law review.
+
 ## Research, skills, security, and deployment
 
 - Use **Marketing Research** for public-source research. Open and verify cited sources, especially current prices, competitor claims, and market statistics. No source URL means the returned advice must be treated as an unverified hypothesis.
 - Skill definitions and tool availability are in `tavroService.js`. New capabilities must have narrow input/output contracts, active-admin permission checks, bounded execution, and backend validation. Customer/email content is untrusted context, never an instruction source.
 - The default dashboard deployment procedure, build/start commands, and Render guidance remain in `README.md`. Apply the same schema and set the same server-only environment variables on the deployment service; HTTPS, Supabase Auth redirect URLs, CORS origins, backups, and provider account limits remain operator responsibilities.
 - RLS is enabled on Tavro tables; API routes use the existing server-only service client and enforce administrator session ownership before reads/writes. Generated content and chat history are rendered as escaped React text. Resend deliveries are individual messages, never a bulk campaign.
+- The API uses one server-configured Gemini model (`GEMINI_MODEL`), with a 30-second request timeout, one provider attempt, and bounded output tokens; model selection is not exposed in the UI.
 
 ## Limitations and follow-up work
 
 - Inbox listing, thread context, replies, Gmail/Microsoft OAuth, provider delivery webhooks, unsubscribe pages, and delivery-event synchronization are not implemented because no authorized mailbox integration is configured.
 - Marketing consent is an operator-entered evidence record, not an automatic integration with a storefront consent capture mechanism. Verify applicable privacy and marketing laws and Gemini data-use/retention terms before using real customer context.
+- Daily prospecting is also limited to existing opted-in store accounts; it is not public lead generation and cannot promise customers or conversions. A persistent server process and enabled setting are required for the 08:00 Nepal-time scheduler.
 - Existing dashboard email functionality remains available and is unchanged; it is separate from Tavro's persistent approval workflow. Consider migrating that legacy send screen to this queue in a separately reviewed change.
-- This implementation does not add campaign sending, bulk email, CRM communication history import, automated conversion metrics, document uploads, or retrieval-augmented internal knowledge.
+- Customer search filters by name, username, email, or exact ID. Order and support history is displayed in the profile, but category-based segmentation and communication-history import are not implemented.
+- This implementation does not add campaign sending, bulk email, structured/persisted campaign briefs, automated conversion metrics, document uploads, or retrieval-augmented internal knowledge.
+- The repository has a consolidated `schema.sql`, not a versioned migration runner. Tavro's SQL additions are idempotent, but no automated down-migration was added; take a database backup before applying them.
 - Tests added here exercise pure validation and approval-hash behavior. No live Gemini, Supabase, Resend, deployment, mailbox, delivery-webhook, consent-capture, or end-to-end authenticated browser test was run.
-- Prioritize integration tests with mocked Supabase/Gemini/Resend, verified storefront consent capture, provider idempotency/webhooks, inbox OAuth if required, and an explicit migration/deployment rollback procedure.
+
+## Prioritized future improvements
+
+1. Add mocked API integration tests for authentication, cross-customer access, quota failures, suppression, approval invalidation, and duplicate sends; document a tested rollback procedure.
+2. Integrate a verified storefront marketing-consent capture/unsubscribe flow and provider delivery webhooks before broad marketing use.
+3. Add Gmail or Microsoft OAuth only if mailbox access is required, with least-privilege scopes, encrypted token storage, and revocation.
+4. Add structured customer segmentation, persistent campaign briefs, and attributable campaign metrics.
+5. Migrate the existing direct-send Email page to the same persistent approval queue after a separately reviewed compatibility change.

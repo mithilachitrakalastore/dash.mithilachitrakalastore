@@ -55,6 +55,12 @@ if (!tokenSecret) {
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 const genAI = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
+const tavroGenAI = geminiApiKey
+    ? new GoogleGenAI({
+        apiKey: geminiApiKey,
+        httpOptions: { timeout: 30_000, retryOptions: { attempts: 1 } },
+    })
+    : null;
 
 const hashPassword = (password) => Buffer.from(`mcs-salt-${password}`).toString('base64');
 
@@ -152,7 +158,7 @@ registerAIDashboardRoutes({
 registerTavroRoutes({
     app,
     supabase,
-    genAI,
+    genAI: tavroGenAI,
     model: geminiModel,
     verifyAdminToken,
 });

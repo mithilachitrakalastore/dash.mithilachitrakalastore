@@ -8,6 +8,7 @@ import { PageHeading, SectionCard } from './shared';
 
 const tabs = [
     ['chat', 'Tavro Chat', MessageSquareText],
+    ['prospecting', 'Daily Prospects', Users],
     ['customers', 'Customers', Users],
     ['email', 'Email Studio', Mail],
     ['research', 'Marketing Research', FileSearch],
@@ -39,6 +40,7 @@ export const TavroPage = ({ token, enabled, providerConfigured }) => {
     const [researchQuery, setResearchQuery] = useState('');
     const [researchResult, setResearchResult] = useState(null);
     const [usage, setUsage] = useState(null);
+    const [prospecting, setProspecting] = useState(null);
     const [loading, setLoading] = useState(false);
     const [busy, setBusy] = useState('');
     const [error, setError] = useState('');
@@ -48,14 +50,16 @@ export const TavroPage = ({ token, enabled, providerConfigured }) => {
         setLoading(true);
         setError('');
         try {
-            const [conversationResult, draftResult, usageResult] = await Promise.all([
+            const [conversationResult, draftResult, usageResult, prospectingResult] = await Promise.all([
                 aiDashboardService.getTavroConversations(token),
                 aiDashboardService.getTavroEmailDrafts(token),
                 aiDashboardService.getTavroUsage(token),
+                aiDashboardService.getTavroProspecting(token),
             ]);
             setConversations(conversationResult.conversations || []);
             setDrafts(draftResult.drafts || []);
             setUsage(usageResult.usage || null);
+            setProspecting(prospectingResult.prospecting || null);
         } catch (loadError) {
             setError(loadError.message || 'Tavro could not load. Apply the Tavro database schema and retry.');
         } finally {
@@ -344,6 +348,47 @@ export const TavroPage = ({ token, enabled, providerConfigured }) => {
         }
     };
 
+    const updateProspecting = async (enabledNext) => {
+        setBusy('prospecting-settings');
+        setError('');
+        setNotice('');
+        try {
+            const result = await aiDashboardService.updateTavroProspecting(enabledNext, token);
+            setProspecting((current) => current ? { ...current, settings: result.settings } : current);
+            setNotice(enabledNext
+                ? 'Daily prospect discovery is enabled. It creates drafts only; each email still requires your individual approval.'
+                : 'Daily prospect discovery is paused. Existing drafts are unchanged.');
+        } catch (settingsError) {
+            setError(settingsError.message || 'Unable to update the daily workflow.');
+        } finally {
+            setBusy('');
+        }
+    };
+
+    const runProspectingNow = async () => {
+        if (!window.confirm('Run today’s prospect discovery now? Tavro will review up to 10 eligible, opted-in accounts and create email drafts. It will not send any emails.')) return;
+        setBusy('prospecting-run');
+        setError('');
+        setNotice('');
+        try {
+            const result = await aiDashboardService.runTavroProspecting(token);
+            setNotice(result.run.message);
+            const refreshed = await aiDashboardService.getTavroProspecting(token);
+            setProspecting(refreshed.prospecting || null);
+            await refreshDrafts();
+        } catch (runError) {
+            setError(runError.message || 'Unable to run daily prospect discovery.');
+            try {
+                const refreshed = await aiDashboardService.getTavroProspecting(token);
+                setProspecting(refreshed.prospecting || null);
+            } catch (refreshError) {
+                setError(`${runError.message || 'Unable to run daily prospect discovery.'} ${refreshError.message || ''}`.trim());
+            }
+        } finally {
+            setBusy('');
+        }
+    };
+
     const selectedConversation = useMemo(
         () => conversations.find((item) => item.id === conversationId),
         [conversationId, conversations],
@@ -431,6 +476,49 @@ export const TavroPage = ({ token, enabled, providerConfigured }) => {
                                 <button type="button" onClick={() => { setActiveTab('email'); setEmailPurpose('support'); }} className={`${buttonClass} mt-5`}><Mail size={13} />Draft customer email</button>
                             </div>
                         )}
+                    </SectionCard>
+                </div>
+            );
+        }
+
+        if (activeTab === 'prospecting') {
+            return (
+                <div className="grid gap-4 xl:grid-cols-[minmax(270px,.85fr)_minmax(0,1.5fr)]">
+                    <SectionCard>
+                        <h2 className="text-xs font-extrabold">Daily opted-in prospect discovery</h2>
+                        <p className="mt-2 text-[9px] leading-5 text-slate-600">At 08:00 Nepal time, Tavro checks existing customer accounts for up to 10 people with recorded explicit marketing consent, a current matching email, no purchase history, no suppression, and no marketing draft in the last 30 days. It uses published store catalog details to prepare drafts.</p>
+                        <div className="mt-4 rounded border border-amber-200 bg-amber-50 p-3 text-[9px] leading-5 text-amber-950">
+                            <strong>Drafts only, not automatic sends.</strong> You review and approve every email individually in Email Studio. Ten prospects or ten new customers per day are not guaranteed. Results depend on eligible consented records, model quota, and provider availability.
+                        </div>
+                        {!prospecting && <p className="mt-3 text-[9px] text-rose-700">Prospecting settings are not available. Apply the updated schema.sql and reload.</p>}
+                        {prospecting && (
+                            <>
+                                <div className="mt-4 flex items-center justify-between gap-3 rounded border border-stone-200 p-3">
+                                    <div><strong className="block text-[10px]">{prospecting.settings.enabled ? 'Daily workflow enabled' : 'Daily workflow paused'}</strong><span className="mt-1 block text-[9px] text-slate-500">Scheduled for {prospecting.schedule} while this server is running.</span></div>
+                                    <button type="button" role="switch" aria-checked={prospecting.settings.enabled} onClick={() => updateProspecting(!prospecting.settings.enabled)} disabled={Boolean(busy)} className={`rounded px-3 py-2 text-[9px] font-bold ${prospecting.settings.enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-100 text-slate-700'}`}>{prospecting.settings.enabled ? 'Pause' : 'Enable'}</button>
+                                </div>
+                                <p className="mt-3 text-[9px] text-slate-500">Daily target: up to {prospecting.settings.daily_target} qualified prospects. AI usage comes from the existing shared dashboard budget.</p>
+                                <button type="button" onClick={runProspectingNow} disabled={!prospecting.settings.enabled || !providerConfigured || !enabled || Boolean(busy)} className={`${buttonClass} mt-4 w-full`}>{busy === 'prospecting-run' ? <LoaderCircle size={13} className="animate-spin" /> : <Search size={13} />}Run today’s discovery</button>
+                            </>
+                        )}
+                        <p className="mt-3 text-[9px] leading-5 text-slate-500">No contacts are sourced by scraping. To qualify, a contact must already exist in the store account database and have verified opt-in recorded in Tavro. Missing consent means no contact.</p>
+                    </SectionCard>
+                    <SectionCard>
+                        <div className="flex items-center justify-between gap-3">
+                            <div><h2 className="text-xs font-extrabold">Recent daily runs</h2><p className="mt-1 text-[9px] text-slate-500">Drafts appear in Email Studio and still need your individual approval.</p></div>
+                            <button type="button" onClick={loadInitial} disabled={Boolean(busy)} className="rounded border border-stone-200 px-3 py-2 text-[9px] font-bold">Refresh</button>
+                        </div>
+                        <div className="mt-4 space-y-2">
+                            {(prospecting?.runs || []).map((run) => (
+                                <article key={run.id} className="rounded border border-stone-100 p-3">
+                                    <div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-[10px]">{run.run_date}</strong><span className={`rounded px-2 py-1 text-[8px] font-bold ${run.status === 'completed' ? 'bg-emerald-50 text-emerald-800' : run.status === 'failed' ? 'bg-rose-50 text-rose-800' : 'bg-amber-50 text-amber-800'}`}>{run.status}</span></div>
+                                    <p className="mt-2 text-[9px] text-slate-600">{run.qualified_count} qualified · {run.drafted_count} drafts created</p>
+                                    {run.error_summary && <p className="mt-1 text-[9px] text-amber-800">{run.error_summary}</p>}
+                                    {run.drafted_count > 0 && <button type="button" onClick={() => setActiveTab('email')} className="mt-2 text-[9px] font-bold text-[#a94e2b] underline">Review drafts in Email Studio</button>}
+                                </article>
+                            ))}
+                            {!prospecting?.runs?.length && <p className="rounded bg-stone-50 p-4 text-[9px] text-slate-500">No prospecting runs yet. Enable the workflow, then start a daily run or wait until 08:00 Nepal time.</p>}
+                        </div>
                     </SectionCard>
                 </div>
             );

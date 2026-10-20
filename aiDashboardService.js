@@ -166,4 +166,13 @@ export const aiDashboardService = {
         body: JSON.stringify({ query }),
     }),
     getTavroUsage: (token) => request('/admin/ai/tavro/usage', token),
+    getTavroProspecting: (token) => request('/admin/ai/tavro/prospecting', token),
+    updateTavroProspecting: (enabled, token) => request('/admin/ai/tavro/prospecting', token, {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled }),
+    }),
+    runTavroProspecting: (token) => request('/admin/ai/tavro/prospecting/run', token, {
+        method: 'POST',
+        body: JSON.stringify({}),
+    }),
 };

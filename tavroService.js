@@ -87,6 +87,53 @@ export const normalizeCustomerSearch = (value) => String(value || '')
     .replace(/[%_]/g, '')
     .slice(0, 100);
 
+export const qualifyDailyProspects = ({
+    permissions,
+    customers,
+    orderedCustomerIds,
+    suppressedEmails,
+    recentlyContactedCustomerIds,
+    limit = 10,
+}) => {
+    const customerById = new Map((customers || []).map((customer) => [String(customer.id), customer]));
+    const orderedIds = new Set((orderedCustomerIds || []).map(String));
+    const suppressed = new Set((suppressedEmails || []).map((email) => String(email).toLowerCase()));
+    const recentlyContacted = new Set((recentlyContactedCustomerIds || []).map(String));
+    const seenCustomerIds = new Set();
+    const qualified = [];
+
+    for (const permission of permissions || []) {
+        const customerId = String(permission.customer_id || '');
+        const customer = customerById.get(customerId);
+        const email = String(permission.email || '').trim().toLowerCase();
+        if (!customerId || seenCustomerIds.has(customerId)) continue;
+        seenCustomerIds.add(customerId);
+        if (permission.consent_status !== 'granted' ||
+            !Number.isFinite(new Date(permission.consent_recorded_at).getTime()) ||
+            new Date(permission.consent_recorded_at).getTime() > Date.now() ||
+            !customer ||
+            ['admin', 'seller'].includes(String(customer.role || '').toLowerCase()) ||
+            String(customer.status || '').toLowerCase() !== 'active' ||
+            customer.email_verified !== true ||
+            !customer.email ||
+            String(customer.email).trim().toLowerCase() !== email ||
+            !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+            orderedIds.has(customerId) ||
+            suppressed.has(email) ||
+            recentlyContacted.has(customerId)) continue;
+        qualified.push({
+            ...customer,
+            id: customerId,
+            email,
+            consentRecordedAt: permission.consent_recorded_at,
+        });
+    }
+
+    return qualified
+        .sort((left, right) => new Date(right.consentRecordedAt) - new Date(left.consentRecordedAt))
+        .slice(0, Math.min(10, Math.max(0, Number(limit) || 0)));
+};
+
 export const validateCustomerEmailDraft = ({ recipient, subject, body, purpose }) => {
     const normalizedRecipient = String(recipient || '').trim().toLowerCase();
     const normalizedSubject = String(subject || '').trim();
@@ -126,6 +173,19 @@ export const createApprovalSnapshot = ({ recipient, subject, body, purpose, vers
     const hash = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
     return { snapshot, hash };
 };
+
+const allowedEmailDraftTransitions = {
+    draft: new Set(['approved', 'cancelled']),
+    pending_approval: new Set(['approved', 'draft', 'cancelled']),
+    approved: new Set(['draft', 'sending', 'cancelled']),
+    sending: new Set(['sent', 'failed']),
+    failed: new Set(['draft', 'approved', 'cancelled']),
+    sent: new Set(),
+    cancelled: new Set(),
+};
+
+export const canTransitionEmailDraft = (currentStatus, nextStatus) =>
+    allowedEmailDraftTransitions[currentStatus]?.has(nextStatus) || false;
 
 export const isApprovalCurrent = (draft) => {
     if (!draft?.approval_snapshot || !draft?.approval_hash) return false;
